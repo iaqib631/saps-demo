@@ -42,6 +42,64 @@ export const DISCREPANCY_LABEL: Record<DiscrepancyType, string> = {
 /** These three fall straight out of FC-01/02 variance per the FC-04 amendment. */
 export const VARIANCE_DERIVED_TYPES: DiscrepancyType[] = ["shortage", "overage", "wrong-weight"];
 
+/**
+ * FC-08 opens three more routes into FC-04, so a CDR no longer implies an
+ * intake finding. These are the types those routes raise. `shortage` is
+ * deliberately shared with the variance set above, and that overlap is the
+ * whole reason `CDR.origin` exists: the type says what was wrong, the origin
+ * says which decision found it, and a workbench filtered on type alone cannot
+ * tell a short pick from a short receipt.
+ */
+export const DISPATCH_DERIVED_TYPES: DiscrepancyType[] = ["shortage", "damage"];
+
+/** Which decision raised the CDR — one intake route, three dispatch routes. */
+export type CdrOrigin =
+  | "intake-variance"
+  | "picking-count"
+  | "picking-unavailable"
+  | "handover-damage";
+
+/** The FC-08 routes — every origin except the FC-01/02 intake one. */
+export type DispatchCdrOrigin = Exclude<CdrOrigin, "intake-variance">;
+
+export const CDR_ORIGIN_LABEL: Record<CdrOrigin, string> = {
+  "intake-variance": "Intake variance (FC-01 §14)",
+  "picking-count": "Piece count mismatch at picking (FC-08 §09)",
+  "picking-unavailable": "Cargo unavailable at picking (FC-08 §10)",
+  "handover-damage": "Damage found at handover (FC-08 §13–14)",
+};
+
+export function isDispatchOrigin(o: CdrOrigin): o is DispatchCdrOrigin {
+  return o !== "intake-variance";
+}
+
+/**
+ * Each dispatch route raises exactly one discrepancy type, fixed here rather
+ * than chosen per call site. A piece that is not at its location is still a
+ * shortage against the gate pass — the cargo is missing, and whether it went
+ * missing off the aircraft or off the rack is what the origin records.
+ *
+ * The intake route is absent on purpose: its type depends on which measure
+ * breached tolerance (shortage / overage / wrong-weight), so it cannot be
+ * derived from the origin alone.
+ */
+export const DISPATCH_ORIGIN_TYPE: Record<DispatchCdrOrigin, DiscrepancyType> = {
+  "picking-count": "shortage",
+  "picking-unavailable": "shortage",
+  "handover-damage": "damage",
+};
+
+/**
+ * What a dispatch-raised CDR points back at, so the workbench can open the
+ * gate pass, the piece or the POD that produced it. Null on intake-raised
+ * CDRs, whose subject is the AWB itself.
+ */
+export interface CdrSourceRef {
+  gatePassNo?: number;
+  pieceId?: string;
+  podId?: number;
+}
+
 /** FC-04 §03 — the six evidence items. */
 export type EvidenceKind =
   | "photo"
@@ -116,6 +174,14 @@ export interface CDR extends DomainRecord {
   type: DiscrepancyType;
   /** True when the FC-04 amendment's variance rule raised this automatically. */
   autoRaised: boolean;
+  /**
+   * Which decision raised it. Once a CDR is open its origin is otherwise
+   * unrecoverable — `type` cannot separate the routes because intake and
+   * picking both raise `shortage`, and `raisedBy` is free text.
+   */
+  origin: CdrOrigin;
+  /** The gate pass / piece / POD behind a dispatch-raised CDR; null at intake. */
+  sourceRef: CdrSourceRef | null;
   variance: Variance | null;
 
   raisedAt: string;
@@ -290,13 +356,48 @@ export const DAMAGE_TYPES = [
  * Holds — CMTS `HOLDINGSTATUS` (29), both sides fully attributed
  * ================================================================== */
 
-export type HoldType = "customs" | "cdr-osd" | "discrepancy" | "security" | "payment";
+/**
+ * Who is holding the cargo, and under what authority.
+ *
+ * `anf` and `asf` are separate members rather than one `security` member
+ * because they are two different Pakistani agencies: the Anti-Narcotics
+ * Force acts under the Control of Narcotic Substances Act, the Airport
+ * Security Force under the ASF Act. They issue their own clearance
+ * references, they staff different desks, and — the operational point —
+ * only the agency that placed a hold can lift it. A register that says
+ * "Security" does not tell the duty officer who to call, which is the one
+ * question the register exists to answer. The vocabulary was already in
+ * the domain: `AgencyClearance.agency` in `customs.ts` has modelled ANF
+ * and ASF separately since FC-06; it simply never reached this union.
+ *
+ * `security` stays for rows that predate the split, where CMTS recorded a
+ * security hold without naming the agency. Dropping it would force every
+ * historical row to be re-labelled as one agency or the other, which is
+ * inventing an attribution rather than migrating one.
+ *
+ * `internal` is SAPS holding its own cargo — a stock reconciliation, a
+ * location audit, a supervisor's stop — with no external agency behind
+ * it. Folded into `customs` it overstated the legal weight of a hold the
+ * terminal can lift itself, and understated how many holds SAPS owns.
+ */
+export type HoldType =
+  | "customs"
+  | "anf"
+  | "asf"
+  | "security"
+  | "cdr-osd"
+  | "discrepancy"
+  | "internal"
+  | "payment";
 
 export const HOLD_TYPE_LABEL: Record<HoldType, string> = {
   customs: "Customs hold",
+  anf: "ANF hold",
+  asf: "ASF hold",
+  security: "Security",
   "cdr-osd": "CDR / OSD hold",
   discrepancy: "Discrepancy",
-  security: "Security",
+  internal: "Internal (SAPS)",
   payment: "Payment",
 };
 

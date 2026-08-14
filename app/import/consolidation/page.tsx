@@ -14,7 +14,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Check, Merge, Split } from "lucide-react";
+import { AlertTriangle, Check, Database, Merge, Plus, Split } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import AwbLink from "@/components/awb/AwbLink";
 import { useSite } from "@/components/site/SiteContext";
@@ -27,6 +27,25 @@ import {
   round2,
   storageLocation,
 } from "@/lib/domain";
+
+/**
+ * CMTS source tables behind consolidation.
+ *
+ * The first three are the ones this screen models directly. The last two are
+ * absorbed from the legacy awb-consolidation module and are easy to miss: a
+ * house AWB does not stop being a house when it leaves. AWBTRANSFER carries the
+ * consol lineage onto a transferred-out house, and AWBARRIVALADVICE is raised
+ * per house rather than per master — so a consolidation of three houses
+ * produces three advices, not one. Both are named here because they are the
+ * two tables whose provenance disappeared when the legacy screen was absorbed.
+ */
+const CMTS_SOURCE_TABLES = [
+  { table: "AWBCONSOLE", meaning: "The house AWB record — 41 columns, rendered below" },
+  { table: "AWBConsolDetail", meaning: "Per-house detail lines under the master" },
+  { table: "AWBSplit", meaning: "Split lineage — SplitId, SplitClassId, parent HWBNo" },
+  { table: "AWBTRANSFER", meaning: "A house transferred out keeps its consolidation lineage" },
+  { table: "AWBARRIVALADVICE", meaning: "Arrival advice is raised per house, not per master" },
+];
 
 export default function ConsolidationPage() {
   const { scope } = useSite();
@@ -122,6 +141,29 @@ export default function ConsolidationPage() {
         ))}
       </div>
 
+      {/* The create verb.
+       *
+       * This screen could split a master and merge houses, but it had no way to
+       * BUILD a consolidation — so the common import case of several houses
+       * arriving loose under one master, assembled at the shed, was not
+       * expressible at all. Split and merge both assume an AWBCONSOLE parent
+       * already exists; this is the action that writes one. CMTS seeds
+       * AWBCONSOLE at indexation, which is why the button sits above the
+       * master rather than inside the split workbench. */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          className="h-9 px-3 rounded-lg bg-[#0B2545] text-white text-[13px] font-semibold inline-flex items-center gap-1.5"
+        >
+          <Plus size={14} />
+          New consolidation
+        </button>
+        <span className="text-[12px] text-[#94A3B8]">
+          Builds an AWBCONSOLE parent from loose house AWBs — each house then takes its own
+          sub-index, class, location and sub-DO.
+        </span>
+      </div>
+
       {/* Master vs houses reconciliation */}
       <div
         className="rounded-[16px] border p-5"
@@ -178,18 +220,41 @@ export default function ConsolidationPage() {
               SHIPMENTTYPE {master.SHIPMENTTYPE} · IsHwb set at indexing
             </p>
           </div>
-          <AwbLink
-            awbNo={master.AWBNO}
-            awbId={master.AWBId}
-            className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[13px] font-mono font-semibold text-[#1B4F8B] no-underline inline-flex items-center"
-          />
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Consolidated vs single-HAWB.
+             *
+             * IsHwb alone cannot tell these apart — a master carrying exactly
+             * one house has the same record shape as a three-house consol but
+             * needs no deconsolidation charge and no house-level segregation,
+             * so the operator has to see which one is on screen before acting.
+             * The house count is the only thing that distinguishes them. */}
+            <span
+              className="h-7 px-3 rounded-full text-[12px] font-semibold inline-flex items-center"
+              style={{
+                backgroundColor: houses.length > 1 ? "#DBEAFE" : "#F1F5F9",
+                color: houses.length > 1 ? "#1B4F8B" : "#64748B",
+              }}
+            >
+              {houses.length > 1 ? `Consolidated · ${houses.length} HAWBs` : "Single HAWB"}
+            </span>
+            <AwbLink
+              awbNo={master.AWBNO}
+              awbId={master.AWBId}
+              className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[13px] font-mono font-semibold text-[#1B4F8B] no-underline inline-flex items-center"
+            />
+          </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-x-5 gap-y-4 mt-4">
+          {/* Carrier and origin are read off the AWB, not hard-coded. They were
+              fixed strings here, so every master on every site claimed to be an
+              Emirates shipment out of DXB — which matters on this screen more
+              than most: houses under one master share a carrier and an origin,
+              and that is exactly what makes them consolidatable. */}
           {[
             ["IGM", master.IGMNO],
             ["Flight", master.FLIGHT],
-            ["Carrier", "Emirates SkyCargo"],
-            ["Origin", "DXB"],
+            ["Carrier", master.AIRLINENAME],
+            ["Origin", master.ORIGIN],
             ["Class", cargoClass(master.CARGOCLASSID).ABBREVATION],
             ["Consignee", master.CONSIGNEE1],
             ["Agent", master.AGENT1 ?? "—"],
@@ -350,6 +415,30 @@ export default function ConsolidationPage() {
             ConsigneeName, UniqueIdentification. SplitClassId then follows onto IMPORTAWBDETAIL and
             IMPORTAWBLOCATION.
           </p>
+        </div>
+      </div>
+
+      {/* CMTS source tables — see CMTS_SOURCE_TABLES above for why AWBTRANSFER
+          and AWBARRIVALADVICE belong on this screen. */}
+      <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+          <Database size={15} className="text-[#64748B]" />
+          <div>
+            <h3 className="text-[14px] font-semibold text-[#0F172A]">CMTS source tables</h3>
+            <p className="text-[11px] text-[#94A3B8]">
+              What this screen absorbs from the legacy AWB consolidation &amp; split module
+            </p>
+          </div>
+        </div>
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-2.5">
+          {CMTS_SOURCE_TABLES.map((t) => (
+            <div key={t.table} className="flex items-baseline gap-2">
+              <span className="font-mono text-[11px] font-semibold text-[#1B4F8B] flex-shrink-0">
+                {t.table}
+              </span>
+              <span className="text-[11px] text-[#64748B]">{t.meaning}</span>
+            </div>
+          ))}
         </div>
       </div>
 

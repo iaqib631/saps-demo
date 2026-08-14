@@ -19,6 +19,11 @@
  * So classification gates warehousing here: special cargo with an
  * unverified handling check cannot be put away, and the zone it goes to is
  * decided by the codes rather than chosen freely.
+ *
+ * **Ported in from the retired `/export-cargo/acceptance`** (see
+ * PORTAL_AND_DEDUP_PLAN.md §2.1): the storage-allocation control — suggested
+ * zone, override with a reason, and the bin action. The legacy screen drew it
+ * on the acceptance form; FC-11 puts the put-away at E08, which is here.
  */
 
 import { useMemo, useState } from "react";
@@ -26,10 +31,12 @@ import Link from "next/link";
 import {
   ArrowUpRight,
   Boxes,
+  MapPin,
   PackageCheck,
   Snowflake,
   SplitSquareHorizontal,
   TriangleAlert,
+  Warehouse,
 } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
@@ -41,6 +48,8 @@ import {
   classificationCleared,
   formatDateTime,
   listExports,
+  type ExportConsignment,
+  type ExportWarehousing,
 } from "@/lib/domain";
 
 const ZONE_LABEL = {
@@ -51,12 +60,86 @@ const ZONE_LABEL = {
   avi: "Live animals",
 } as const;
 
+type ExportZone = ExportWarehousing["zone"];
+
+const ZONE_OPTIONS: ExportZone[] = ["general", "dgr", "cool-chain", "strongroom", "avi"];
+
+/* ================================================================== *
+ * Suggested zone, and the override that costs a reason
+ *
+ * Ported from the retired export-cargo acceptance counter, where allocation
+ * was two fields on the acceptance form: a suggested zone and an "Override
+ * (with reason)" box.
+ *
+ * What carried over is the shape of the control rather than its position.
+ * The canonical screen shows `locationCode` and `zone` as facts with nothing
+ * behind them, which cannot express *"the engine said DGR store and the
+ * supervisor sent it to general anyway"* — the exact sentence anyone
+ * investigating a DG incident is trying to reconstruct. A suggestion the
+ * operator may overrule, at the price of saying why, is the smallest control
+ * that records both halves.
+ *
+ * The general default keeps the legacy screen's `EXP-A1` so the two read as
+ * the same shed rather than two inventions.
+ * ================================================================== */
+
+/** The bay each zone allocates into. `EXP-A1` is the legacy screen's own default. */
+const ZONE_BIN: Record<ExportZone, string> = {
+  general: "EXP-A1",
+  dgr: "EXP-DGR-01",
+  "cool-chain": "EXP-COOL-01",
+  strongroom: "EXP-VAL-01",
+  avi: "EXP-AVI-01",
+};
+
+interface ZoneSuggestion {
+  zone: ExportZone;
+  locationCode: string;
+  why: string;
+}
+
+function suggestZone(c: ExportConsignment): ZoneSuggestion {
+  const codes: string[] = c.classification?.codes ?? [];
+  // Order matters: a consignment carrying both DGR and COL is segregated as
+  // dangerous goods first. Cool chain is a service; segregation is a rule.
+  const zone: ExportZone = codes.includes("DGR")
+    ? "dgr"
+    : codes.includes("AVI")
+      ? "avi"
+      : codes.includes("VAL")
+        ? "strongroom"
+        : codes.includes("PER") || codes.includes("COL")
+          ? "cool-chain"
+          : "general";
+
+  const why: Record<ExportZone, string> = {
+    dgr: "DGR on the classification — segregated store, no co-location with general cargo.",
+    avi: "Live animals — ventilated bay, held away from the DGR store.",
+    strongroom: "Valuable cargo — strongroom, dual custody on entry and exit.",
+    "cool-chain":
+      "Perishable / cool chain — temperature-controlled bay; a break in the chain re-opens 08a.",
+    general: "No special-handling code — general export store.",
+  };
+
+  return { zone, locationCode: ZONE_BIN[zone], why: why[zone] };
+}
+
 export default function ExportWarehousingPage() {
   const { scope, isHq } = useSite();
   const rows = useMemo(() => listExports(scope), [scope]);
 
   const [selected, setSelected] = useState<number | null>(null);
   const c = rows.find((x) => x.id === selected) ?? rows[0] ?? null;
+
+  /*
+   * Allocation state, keyed by consignment so one row's override does not
+   * follow the operator onto the next. `binned` records the committed
+   * location — there is no domain field for an allocation decision distinct
+   * from the put-away that follows it, so it is held at screen level.
+   */
+  const [zonePick, setZonePick] = useState<Record<number, ExportZone>>({});
+  const [overrideReason, setOverrideReason] = useState<Record<number, string>>({});
+  const [binned, setBinned] = useState<Record<number, string>>({});
 
   const classified = rows.filter((x) => x.classification);
   const special = classified.filter((x) => x.classification!.isSpecial);
@@ -254,6 +337,131 @@ export default function ExportWarehousingPage() {
                   </>
                 )}
               </div>
+
+              {/* Ported from /export-cargo/acceptance — suggest, override, bin. */}
+              {(() => {
+                const sug = suggestZone(c);
+                const chosen = zonePick[c.id] ?? sug.zone;
+                const isOverride = chosen !== sug.zone;
+                const reason = overrideReason[c.id] ?? "";
+                const blocked = isOverride && reason.trim() === "";
+                const committed = binned[c.id];
+
+                return (
+                  <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+                      <MapPin size={15} className="text-[#64748B]" />
+                      <div>
+                        <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                          Storage allocation — suggested, overridable, binned
+                        </h3>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                          The engine proposes a zone off the classification. An operator may
+                          overrule it, and an override costs a reason.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-5 flex flex-col gap-4">
+                      <div className="rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] px-4 py-3 flex items-start gap-3">
+                        <Warehouse size={16} className="text-[#1B4F8B] flex-shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-semibold text-[#1E3A8A]">
+                            Suggested — {ZONE_LABEL[sug.zone]}{" "}
+                            <span className="font-mono">({sug.locationCode})</span>
+                          </p>
+                          <p className="text-[12px] text-[#1E3A8A] mt-0.5">{sug.why}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <span className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                          Zone
+                        </span>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {ZONE_OPTIONS.map((z) => {
+                            const active = chosen === z;
+                            return (
+                              <button
+                                key={z}
+                                onClick={() => setZonePick((prev) => ({ ...prev, [c.id]: z }))}
+                                className="h-8 px-3.5 rounded-lg text-[12px] font-semibold border transition-colors cursor-pointer"
+                                style={{
+                                  backgroundColor: active ? "#0B2545" : "#FFFFFF",
+                                  color: active ? "#FFFFFF" : "#475569",
+                                  borderColor: active
+                                    ? "#0B2545"
+                                    : z === sug.zone
+                                      ? "#93C5FD"
+                                      : "#E2E8F0",
+                                }}
+                              >
+                                {ZONE_LABEL[z]}
+                                {z === sug.zone && !active ? " · suggested" : ""}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                          Override (with reason)
+                          {isOverride && <span className="text-[#DC2626]"> *</span>}
+                        </label>
+                        <input
+                          value={reason}
+                          onChange={(e) =>
+                            setOverrideReason((prev) => ({ ...prev, [c.id]: e.target.value }))
+                          }
+                          disabled={!isOverride}
+                          placeholder={
+                            isOverride
+                              ? "Why this consignment is not going where the engine sent it"
+                              : "Not required — the suggested zone is selected"
+                          }
+                          className="h-9 px-3 rounded-lg border text-[13px] text-[#0F172A] outline-none focus:border-[#1B4F8B] disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]"
+                          style={{ borderColor: blocked ? "#FCA5A5" : "#E2E8F0" }}
+                        />
+                        {blocked && (
+                          <span className="text-[11px] text-[#DC2626]">
+                            An override without a reason is the record nobody can audit. Say why.
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <button
+                          onClick={() =>
+                            setBinned((prev) => ({ ...prev, [c.id]: ZONE_BIN[chosen] }))
+                          }
+                          disabled={blocked}
+                          className="h-9 px-4 rounded-lg text-[13px] font-bold text-white transition-colors cursor-pointer disabled:cursor-not-allowed"
+                          style={{ backgroundColor: blocked ? "#CBD5E1" : "#16A34A" }}
+                        >
+                          Accept &amp; bin
+                        </button>
+                        {committed && (
+                          <span className="text-[12px] text-[#16A34A] font-semibold">
+                            Binned to <span className="font-mono">{committed}</span> ·{" "}
+                            {ZONE_LABEL[chosen]}
+                            {isOverride ? " — override reason recorded" : ""}
+                          </span>
+                        )}
+                      </div>
+
+                      {c.warehousing && (
+                        <p className="text-[11px] text-[#94A3B8] leading-relaxed">
+                          This consignment is already put away at{" "}
+                          <span className="font-mono">{c.warehousing.locationCode}</span>. Binning
+                          again is a re-allocation, not a first placement — the E08 record below is
+                          what it moves from.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* E08 warehousing */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">

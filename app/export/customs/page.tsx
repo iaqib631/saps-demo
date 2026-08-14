@@ -22,6 +22,11 @@
  * So rounds are modelled individually and shown as a history. "Cleared on
  * round 2 after the GD came back signed" is a different operational fact
  * from "cleared", and only one of them tells you the desk is working.
+ *
+ * **Ported in from the retired `/export-cargo/customs`** (see
+ * PORTAL_AND_DEDUP_PLAN.md §2.1): the Export GD register and the five desk
+ * status chips. Rounds are what happened; the register is what the desk is
+ * holding. This screen had the first and no way at all to see the second.
  */
 
 import { useMemo, useState } from "react";
@@ -48,6 +53,7 @@ import {
   formatPkr,
   listExports,
   type ClearanceOutcome,
+  type ExportConsignment,
 } from "@/lib/domain";
 
 const OUTCOME_TONE: Record<ClearanceOutcome, { bg: string; fg: string; border: string }> = {
@@ -62,17 +68,75 @@ const ARM_LABEL = {
   "document-check": "Document check — AWB / GD signed",
 } as const;
 
+/* ================================================================== *
+ * Export-desk status — the vocabulary a clerk filters a day's book on
+ *
+ * Ported from the retired `/export-cargo/customs`, which had five statuses
+ * (Filed / Under Review / Query / Cleared / Held) and no rounds. This screen
+ * has rounds and no statuses. The two are not alternatives and neither
+ * replaces the other: **rounds are what happened, status is where the file
+ * sits now.** A clerk with a hundred consignments cannot read a hundred
+ * round histories to find the six she has to chase today.
+ *
+ * So status is derived from the rounds rather than stored beside them —
+ * one source of truth, two readings of it. Deriving also means the chips
+ * cannot drift out of step with the histories underneath them, which is the
+ * failure mode of carrying a status column by hand.
+ * ================================================================== */
+
+type DeskStatus = "Filed" | "Under Review" | "Query" | "Cleared" | "Held";
+
+const DESK_STATUS_ORDER: DeskStatus[] = ["Filed", "Under Review", "Query", "Cleared", "Held"];
+
+const DESK_STATUS_TONE: Record<DeskStatus, { bg: string; fg: string }> = {
+  Filed: { bg: "#F1F5F9", fg: "#64748B" },
+  "Under Review": { bg: "#FEF3C7", fg: "#D97706" },
+  Query: { bg: "#FEE2E2", fg: "#DC2626" },
+  Cleared: { bg: "#DCFCE7", fg: "#16A34A" },
+  Held: { bg: "#FEE2E2", fg: "#DC2626" },
+};
+
+function deskStatus(c: ExportConsignment): DeskStatus {
+  const st = clearanceState(c.clearance);
+  // Terminal customs outcomes — returned to shipper, or detained with customs
+  // keeping the goods. "Held" is where a file stops, not where it waits.
+  if (st.terminal) return "Held";
+  // The loop is live: customs raised a defect and the shipper has not answered
+  // it. That is a query in desk vocabulary, and it is the bucket that gets
+  // worked, so it is deliberately toned as the loudest of the five.
+  if (st.inCorrectionLoop) return "Query";
+  if (st.cleared && c.declaration.clearedAt) return "Cleared";
+  // Lodged and acknowledged by PSW, but no clearance yet — the file is with
+  // customs, not with the shipper, which is a different phone call.
+  if (c.declaration.sdLodgedAt) return "Under Review";
+  return "Filed";
+}
+
 export default function ExportCustomsPage() {
   const { scope, isHq } = useSite();
   const rows = useMemo(() => listExports(scope), [scope]);
 
   const [selected, setSelected] = useState<number | null>(null);
-  const c = rows.find((x) => x.id === selected) ?? rows[0] ?? null;
+  const [statusFilter, setStatusFilter] = useState<"all" | DeskStatus>("all");
+
+  // The chip narrows the register AND the master list, so the two cannot show
+  // different books. Selection falls back to the first visible row rather than
+  // stranding a detail pane on a consignment the filter has hidden.
+  const visible = useMemo(
+    () => (statusFilter === "all" ? rows : rows.filter((x) => deskStatus(x) === statusFilter)),
+    [rows, statusFilter],
+  );
+  const c = visible.find((x) => x.id === selected) ?? visible[0] ?? null;
   const state = c ? clearanceState(c.clearance) : null;
 
   const inLoop = rows.filter((x) => clearanceState(x.clearance).inCorrectionLoop);
   const terminal = rows.filter((x) => clearanceState(x.clearance).terminal);
   const withCorrections = rows.filter((x) => clearanceState(x.clearance).corrections > 0);
+
+  const statusCounts = DESK_STATUS_ORDER.map((s) => ({
+    status: s,
+    count: rows.filter((x) => deskStatus(x) === s).length,
+  }));
 
   return (
     <div className="flex flex-col gap-6">
@@ -141,6 +205,129 @@ export default function ExportCustomsPage() {
           description="E05 runs after weighment and before the physical check."
         />
       ) : (
+        <>
+        {/* Ported from /export-cargo/customs — the register and its chips. */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setStatusFilter("all")}
+              className="h-8 px-3.5 rounded-full text-[12px] font-bold border transition-colors cursor-pointer"
+              style={
+                statusFilter === "all"
+                  ? { backgroundColor: "#0B2545", color: "#FFFFFF", borderColor: "#0B2545" }
+                  : { backgroundColor: "#FFFFFF", color: "#475569", borderColor: "#E2E8F0" }
+              }
+            >
+              All {rows.length}
+            </button>
+            {statusCounts.map(({ status, count }) => {
+              const active = statusFilter === status;
+              const tone = DESK_STATUS_TONE[status];
+              return (
+                <button
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
+                  className="h-8 px-3.5 rounded-full text-[12px] font-bold border transition-colors cursor-pointer"
+                  style={
+                    active
+                      ? { backgroundColor: "#0B2545", color: "#FFFFFF", borderColor: "#0B2545" }
+                      : {
+                          backgroundColor: count ? tone.bg : "#FFFFFF",
+                          color: count ? tone.fg : "#94A3B8",
+                          borderColor: "#E2E8F0",
+                        }
+                  }
+                >
+                  {status} {count}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
+              <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                Export GD register
+              </h3>
+              <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                One row per declaration at the desk. Pick a row to read its round history below.
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px]">
+                <thead>
+                  <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                    {["AWB", "Export GD #", "Shipper", "Destination", "Status", "Filed at", "CHA"].map(
+                      (h) => (
+                        <th
+                          key={h}
+                          className="text-left px-4 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap"
+                        >
+                          {h}
+                        </th>
+                      ),
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((x) => {
+                    const st = deskStatus(x);
+                    const tone = DESK_STATUS_TONE[st];
+                    return (
+                      <tr
+                        key={x.id}
+                        onClick={() => setSelected(x.id)}
+                        className="border-b border-[#F1F5F9] last:border-0 hover:bg-[#F8FAFC] cursor-pointer transition-colors"
+                        style={{ backgroundColor: c?.id === x.id ? "#EBF0F7" : undefined }}
+                      >
+                        <td className="px-4 py-2.5 font-mono text-[12px] font-semibold text-[#0F172A] whitespace-nowrap">
+                          {x.awbNo}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
+                          {x.declaration.sdRef ?? "Not lodged"}
+                        </td>
+                        <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">
+                          {x.acceptance.SHIPPERNAME}
+                        </td>
+                        <td className="px-4 py-2.5 font-mono text-[12px] text-[#475569]">
+                          {x.acceptance.DESTINATION}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span
+                            className="h-[20px] px-2 rounded-full text-[10px] font-bold inline-flex items-center"
+                            style={{ backgroundColor: tone.bg, color: tone.fg }}
+                          >
+                            {st}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-[12px] text-[#475569] whitespace-nowrap">
+                          {x.declaration.sdLodgedAt ? formatDateTime(x.declaration.sdLodgedAt) : "—"}
+                        </td>
+                        {/*
+                          CMTS carries the clearing agent as AGENTNAME on
+                          CARGOACCEPTANCE — CARGOAGENTNAME is the forwarder,
+                          which is a different party. The legacy register's
+                          "CHA" column is this one.
+                        */}
+                        <td className="px-4 py-2.5 text-[12px] text-[#475569] whitespace-nowrap">
+                          {x.acceptance.AGENTNAME}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {visible.length === 0 && (
+              <p className="px-5 py-4 text-[12px] text-[#94A3B8]">
+                Nothing at this status. The five statuses exist so a real day&rsquo;s book can be
+                narrowed; the seed carries five consignments and every one of them is through E05,
+                so the spread here is thin by construction rather than by accident.
+              </p>
+            )}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
@@ -148,7 +335,7 @@ export default function ExportCustomsPage() {
               <h3 className="text-[14px] font-semibold text-[#0F172A]">At the export desk</h3>
             </div>
             <div className="max-h-[560px] overflow-y-auto">
-              {rows.map((x) => {
+              {visible.map((x) => {
                 const st = clearanceState(x.clearance);
                 const last = st.last;
                 const tone = last ? OUTCOME_TONE[last.outcome] : OUTCOME_TONE.cleared;
@@ -383,6 +570,7 @@ export default function ExportCustomsPage() {
             </div>
           )}
         </div>
+        </>
       )}
     </div>
   );

@@ -15,15 +15,34 @@
  *      fields CMTS has nowhere to put.
  *
  * Section82Days is per-site configurable and still open as BLK-07.
+ *
+ * ---------------------------------------------------------------------
+ * Merged in from the legacy `/excise-compliance/section-82-long-stay`
+ * compliance register. That screen was statutorily thinner — no scheduled
+ * notices, no due dates, no AWBSECTION82 columns, no dwell bar — but it
+ * carried the entire case-management layer this screen was missing:
+ *
+ *   • Customs Decision as a field distinct from Final Disposition. The rail
+ *     jumps C4-escalated-customs → C6-disposition-recorded, so "customs
+ *     ruled, the outcome is not recorded yet" had nowhere to live. See
+ *     components/exceptions/long-stay/caseFile.ts.
+ *   • The notice-status roll-up including "Final Notice".
+ *   • A case register with Consignee, Cargo Class, Pieces, Weight and a
+ *     Case # business key — none of which the AWB-keyed rail could show.
+ *   • Owner, Escalation Date, Free Period Expiry.
+ *   • The six filters, the six action verbs, and the documents tab.
+ *   • The "Released after escalation" KPI — the outcome measure for the
+ *     whole branch, and the only tile here that reports a result rather
+ *     than a backlog.
+ * ---------------------------------------------------------------------
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertOctagon,
   ArrowUpRight,
   Building2,
-  CalendarClock,
   Gavel,
   Trash2,
   Unlock,
@@ -32,15 +51,27 @@ import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
 import StageRail, { type RailStep } from "@/components/exceptions/StageRail";
-import { AgingBadge, AuditStrip, DocNumber } from "@/components/primitives";
+import CaseFileCard from "@/components/exceptions/long-stay/CaseFileCard";
+import CaseFilterBar from "@/components/exceptions/long-stay/CaseFilterBar";
+import CaseRegisterTable from "@/components/exceptions/long-stay/CaseRegisterTable";
+import {
+  CUSTOMS_DECISION_LABEL,
+  EMPTY_CASE_FILTERS,
+  NOTICE_STATUS_LABEL,
+  buildCaseFiles,
+  decisionAheadOfDisposition,
+  filterCases,
+  type CaseFilterState,
+  type CustomsDecision,
+} from "@/components/exceptions/long-stay/caseFile";
+import { AuditStrip, DocNumber } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
   DISPOSITION_LABEL,
   LONGSTAY_STAGE_LABEL,
-  awbById,
-  cargoClass,
   formatDate,
   formatDateTime,
+  formatKg,
   formatPkr,
   listLongStay,
   type Disposition,
@@ -93,19 +124,51 @@ const S82_COLUMNS = [
 
 export default function LongStayPage() {
   const { scope, isHq } = useSite();
-  const cases = useMemo(() => listLongStay(scope), [scope]);
+  // The statutory record from lib/domain, composed with the case-management
+  // layer the legacy register carried. Composition happens once per scope so
+  // the register, the filters and the detail all read the same rows.
+  const cases = useMemo(() => buildCaseFiles(listLongStay(scope)), [scope]);
+
+  const [filters, setFilters] = useState<CaseFilterState>(EMPTY_CASE_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const visible = useMemo(() => filterCases(cases, filters), [cases, filters]);
 
   const [selectedId, setSelectedId] = useState<number | null>(cases[0]?.id ?? null);
-  const c = cases.find((x) => x.id === selectedId) ?? cases[0] ?? null;
+  // A filter that hides the selected case would otherwise leave the detail
+  // stack describing a row the operator can no longer see in the register.
+  useEffect(() => {
+    if (visible.length === 0) return;
+    if (!visible.some((x) => x.id === selectedId)) setSelectedId(visible[0].id);
+  }, [visible, selectedId]);
+
+  const c = visible.find((x) => x.id === selectedId) ?? visible[0] ?? null;
 
   const [draftDisposition, setDraftDisposition] = useState<Disposition | null>(null);
+  const [draftDecision, setDraftDecision] = useState<CustomsDecision | null>(null);
+  const [actionLog, setActionLog] = useState<string[]>([]);
   const disposition = c?.disposition ?? draftDisposition;
+  const customsDecision = draftDecision ?? c?.customsDecision ?? "pending";
+
+  // Drafts belong to the case they were typed against. Keyed off the case that
+  // is actually rendered rather than off the click handler, because a filter
+  // can move the selection without anyone clicking anything.
+  const selectedKey = c?.id ?? null;
+  useEffect(() => {
+    setDraftDisposition(null);
+    setDraftDecision(null);
+    setActionLog([]);
+  }, [selectedKey]);
 
   const overdueNotices = cases.reduce(
     (n, x) => n + x.notices.filter((v) => v.status === "overdue").length,
     0,
   );
   const pastDeadline = cases.filter((x) => x.daysToDeadline < 0);
+  // The branch's only outcome measure: escalation that ended in the cargo
+  // going out of the door rather than under the hammer.
+  const releasedAfterEscalation = cases.filter(
+    (x) => x.escalatedToCustomsAt !== null && x.disposition === "release-after-clearance",
+  );
 
   const rail: RailStep[] = c
     ? STAGE_ORDER.map((s) => ({
@@ -117,9 +180,9 @@ export default function LongStayPage() {
             : s === "C2-alert-triggered"
               ? `Auto-fired by the FC-07 dwell clock at ${c.section82Days} days`
               : s === "C3-parties-notified"
-                ? `${c.notices.filter((n) => n.sentAt).length} of ${c.notices.length} notices sent`
+                ? `${c.notices.filter((n) => n.sentAt).length} of ${c.notices.length} notices sent · ${NOTICE_STATUS_LABEL[c.noticeStatus]}`
                 : s === "C4-escalated-customs" && c.escalatedToCustomsAt
-                  ? formatDateTime(c.escalatedToCustomsAt)
+                  ? `${formatDateTime(c.escalatedToCustomsAt)} · customs decision: ${CUSTOMS_DECISION_LABEL[customsDecision].toLowerCase()}`
                   : s === "C5-section-82" && c.DCNumber
                     ? `DC ${c.DCNumber} · examiner ${c.Examiner ?? "—"}`
                     : s === "C6-disposition-recorded" && c.disposition
@@ -147,14 +210,14 @@ export default function LongStayPage() {
             Long-stay &amp; Section 82
           </h1>
           <p className="text-[13px] text-[#64748B] mt-1">
-            Cargo past the statutory clearance period. Notices schedule themselves; the final
-            disposition is recorded against the AWB.
+            Cargo past the statutory clearance period. Notices schedule themselves; the case is
+            owned, escalated and decided; the final disposition is recorded against the AWB.
             {isHq ? " All sites." : ` ${scope} only.`}
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
           { label: "Long-stay cases", value: String(cases.length), tone: "#0F172A" },
           { label: "Past statutory deadline", value: String(pastDeadline.length), tone: "#DC2626" },
@@ -163,6 +226,11 @@ export default function LongStayPage() {
             label: "Awaiting disposition",
             value: String(cases.filter((x) => !x.disposition).length),
             tone: "#7C3AED",
+          },
+          {
+            label: "Released after escalation",
+            value: String(releasedAfterEscalation.length),
+            tone: "#16A34A",
           },
         ].map((k) => (
           <div key={k.label} className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
@@ -182,60 +250,37 @@ export default function LongStayPage() {
           description="The FC-07 dwell clock fires this branch automatically once an AWB passes its site's Section 82 threshold."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
-              <CalendarClock size={15} className="text-[#64748B]" />
-              <h3 className="text-[14px] font-semibold text-[#0F172A]">Case register</h3>
-            </div>
-            <div className="max-h-[560px] overflow-y-auto">
-              {cases.map((x) => {
-                const awb = awbById(x.awbId);
-                return (
-                  <button
-                    key={x.id}
-                    onClick={() => {
-                      setSelectedId(x.id);
-                      setDraftDisposition(null);
-                    }}
-                    className="w-full text-left px-5 py-3 border-b border-[#F1F5F9] last:border-0 hover:bg-[#F8FAFC] transition-colors cursor-pointer"
-                    style={{ backgroundColor: c?.id === x.id ? "#EBF0F7" : undefined }}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-[12px] font-semibold text-[#0F172A]">
-                        {x.AWBNO}
-                      </span>
-                      {awb && (
-                        <AgingBadge
-                          totalDays={x.ageDays}
-                          freeDays={cargoClass(awb.CARGOCLASSID).freeDays}
-                          section82Days={x.section82Days}
-                          compact
-                        />
-                      )}
-                    </div>
-                    <p className="text-[11px] text-[#64748B] mt-1 leading-snug">
-                      {LONGSTAY_STAGE_LABEL[x.stage]}
-                    </p>
-                    <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                      {x.ageDays}d dwell ·{" "}
-                      {x.daysToDeadline < 0
-                        ? `${Math.abs(x.daysToDeadline)}d past deadline`
-                        : `${x.daysToDeadline}d to deadline`}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+        <>
+          <CaseFilterBar
+            filters={filters}
+            onChange={setFilters}
+            expanded={filtersOpen}
+            onToggleExpanded={() => setFiltersOpen((v) => !v)}
+            showing={visible.length}
+            total={cases.length}
+          />
+
+          {visible.length === 0 ? (
+            <EmptyState
+              title="No cases match these filters"
+              description="Clear a facet to widen the register. Every long-stay case in scope is still open — the filters hide rows, they do not close them."
+            />
+          ) : (
+            <CaseRegisterTable rows={visible} selectedId={c?.id ?? null} onSelect={setSelectedId} />
+          )}
 
           {c && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
-              {/* Statutory clock */}
+            <div className="flex flex-col gap-5">
+              {/* Statutory clock + the case identity the register keys on */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>
-                    <AwbLink awbNo={c.AWBNO} awbId={c.awbId} />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-[12px] font-bold text-[#0B2545] bg-[#EBF0F7] h-[22px] px-2 rounded inline-flex items-center">
+                        {c.caseNo}
+                      </span>
+                      <AwbLink awbNo={c.AWBNO} awbId={c.awbId} />
+                    </div>
                     <p className="text-[12px] text-[#64748B] mt-1.5">
                       IGM {c.IGMNO} · arrived {formatDate(c.arrivedAt)}
                       {c.HWBNo ? ` · HAWB ${c.HWBNo}` : ""}
@@ -253,6 +298,42 @@ export default function LongStayPage() {
                       ? `${Math.abs(c.daysToDeadline)} days past deadline`
                       : `${c.daysToDeadline} days remaining`}
                   </span>
+                </div>
+
+                {/* The case-register facts. None of these exist on the
+                    statutory record — they come from the AWB behind it and
+                    from the case-management overlay. */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-4 pb-4 border-b border-[#F1F5F9]">
+                  {(
+                    [
+                      ["Consignee", c.consignee],
+                      ["Cargo class", `${c.cargoClassAbbr} — ${c.cargoClassName}`],
+                      ["Pieces", String(c.pieces)],
+                      ["Weight", formatKg(c.weightKg)],
+                      ["Owner", `${c.owner} queue`],
+                      [
+                        "Free period expiry",
+                        c.freePeriodExpiryAt ? formatDate(c.freePeriodExpiryAt) : null,
+                      ],
+                      [
+                        "Escalation date",
+                        c.escalationDate ? formatDate(c.escalationDate) : null,
+                      ],
+                      ["Notice status", NOTICE_STATUS_LABEL[c.noticeStatus]],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div key={label} className="flex flex-col gap-1">
+                      <span className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                        {label}
+                      </span>
+                      <span
+                        className="text-[13px] font-medium break-words"
+                        style={{ color: value ? "#0F172A" : "#CBD5E1" }}
+                      >
+                        {value ?? "Not recorded"}
+                      </span>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Dwell bar against the statutory threshold */}
@@ -282,6 +363,49 @@ export default function LongStayPage() {
                     everywhere.
                   </p>
                 </div>
+              </div>
+
+              {/* Customs decision — the field the canonical model had no room
+                  for, and the gap it leaves when it is missing. */}
+              <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                      Customs decision — between §C4 and §C6
+                    </h3>
+                    <p className="text-[11px] text-[#94A3B8] mt-0.5 max-w-[62ch]">
+                      What customs ruled, recorded separately from what the terminal did about it.
+                      Approving an auction and holding one are weeks apart and belong to different
+                      actors; collapsing them loses the weeks.
+                    </p>
+                  </div>
+                  <span
+                    className="h-[26px] px-3 rounded-full text-[11px] font-bold inline-flex items-center gap-1.5"
+                    style={{
+                      backgroundColor: customsDecision === "pending" ? "#F1F5F9" : "#F3E8FF",
+                      color: customsDecision === "pending" ? "#64748B" : "#7C3AED",
+                    }}
+                  >
+                    <Gavel size={12} />
+                    {CUSTOMS_DECISION_LABEL[customsDecision]}
+                  </span>
+                </div>
+
+                {decisionAheadOfDisposition({ ...c, customsDecision }) && (
+                  <div className="mt-4 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-4 py-3">
+                    <p className="text-[12px] text-[#92400E]">
+                      Customs decided{" "}
+                      <span className="font-semibold">
+                        {CUSTOMS_DECISION_LABEL[customsDecision].toLowerCase()}
+                      </span>
+                      {c.escalationDate ? ` after the ${formatDate(c.escalationDate)} escalation` : ""}
+                      , and no final disposition has been recorded. The stage rail below is stuck at{" "}
+                      {LONGSTAY_STAGE_LABEL[c.stage].split(". ")[0]} because §C6 needs a disposition
+                      it does not have — which is exactly the state this field exists to make
+                      visible. Without it the case reads as untouched.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
@@ -332,7 +456,9 @@ export default function LongStayPage() {
                   </h3>
                   <p className="text-[11px] text-[#94A3B8] mt-0.5">
                     Scheduled automatically off the statutory deadline. Each carries its own
-                    document number continuing the CMTS sequence.
+                    document number continuing the CMTS sequence. The notice due on the deadline
+                    itself is the final notice — the last one served before the cargo becomes
+                    disposable.
                   </p>
                 </div>
                 <div className="divide-y divide-[#F1F5F9]">
@@ -357,6 +483,11 @@ export default function LongStayPage() {
                             >
                               {n.status}
                             </span>
+                            {n.dueOffsetDays === 0 && (
+                              <span className="h-[20px] px-2 rounded-full text-[10px] font-bold inline-flex items-center uppercase bg-[#FEE2E2] text-[#DC2626]">
+                                Final notice
+                              </span>
+                            )}
                           </div>
                           <p className="text-[11px] text-[#64748B] mt-1">
                             Due {formatDate(n.dueAt)} ({n.dueOffsetDays}d before deadline) ·
@@ -496,6 +627,16 @@ export default function LongStayPage() {
                 )}
               </div>
 
+              <CaseFileCard
+                caseFile={c}
+                customsDecision={customsDecision}
+                onRecordDecision={setDraftDecision}
+                disposition={disposition}
+                onRecordDisposition={setDraftDisposition}
+                log={actionLog}
+                onAction={(label) => setActionLog((prev) => [...prev, label])}
+              />
+
               <div className="flex items-center gap-3 flex-wrap">
                 <Link
                   href="/exceptions/queue"
@@ -514,7 +655,7 @@ export default function LongStayPage() {
               <AuditStrip record={c} />
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

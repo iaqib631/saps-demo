@@ -284,10 +284,22 @@ export function formEntry<T>(
 }
 
 /* ------------------------------------------------------------------ *
- * Declared vs physical variance (FC-01 05e → FC-04)
+ * Declared vs physical variance (FC-01 05e / §14 → FC-04)
  *
- * "Declared (OCR) vs physical (received) variance feeds 07 Reconciliation
- *  → 08 → CDR (FC-04)."
+ * Declared (OCR) vs physical (received) variance raises a CDR (FC-04)
+ * DIRECTLY from the §14 weighing / condition check. It does not rewind to
+ * §07–08 reconciliation.
+ *
+ * That rewind used to be written here, and it was wrong in two ways: it
+ * routed a physical finding back through a document-level decision that
+ * cannot resolve it, and it implied an AWB's lifecycle stage moves
+ * backwards, which nothing in this codebase does. §07–08 remains the
+ * decision for manifest-vs-document discrepancies found at that stage —
+ * it is simply no longer the destination of anything discovered at
+ * weighing. The §14 finding has exactly one downstream edge: FC-04.
+ *
+ * This block sits above the tolerance constant that every weighing screen
+ * imports, so treat it as the canonical statement of the rule.
  *
  * CMTS already models the declared/received pairs on IMPORTAWBDETAIL:
  *   PCS/RECEIVEDPCS, WEIGTH/RECEIVEDWT, CHARGEWEIGTH/CHARGEDRECEIVEDWT
@@ -318,7 +330,7 @@ export function variance(declared: number, physical: number): Variance {
 }
 
 /* ------------------------------------------------------------------ *
- * Dwell / aging (FC-07 §02–03 storage clock, FC-10 aging engine)
+ * Dwell / aging (FC-07 §01–03a storage clock, FC-10 aging engine)
  * ------------------------------------------------------------------ */
 
 export const MS_PER_DAY = 86_400_000;
@@ -328,7 +340,16 @@ export function daysBetween(fromIso: string, toIso: string): number {
 }
 
 export interface DwellState {
-  arrivedAt: string;
+  /**
+   * FC-07 §02 — where the storage clock begins. This is cargo INTAKE
+   * (`AWB.intakeAt`), not flight arrival (`AWB.arrivedAt`).
+   *
+   * The field is named for the clock rather than the event so that this
+   * engine and `calculateCharges` cannot drift apart: whatever timestamp
+   * is passed in here is the same one the charge calculator prices from.
+   * The old `arrivedAt` name is what let the two disagree.
+   */
+  clockStartedAt: string;
   asOf: string;
   totalDays: number;
   freeDays: number;
@@ -342,15 +363,34 @@ export interface DwellState {
   daysToSection82: number;
 }
 
+/**
+ * The FC-07 §01–03a chain, in order. Each step depends on the one above it,
+ * which is why they are computed here rather than assembled by each caller:
+ *
+ *   1. cargo intake is recorded                    → `AWB.intakeAt`
+ *   2. the storage clock starts at that timestamp  → `clockStartedAt`
+ *   3. the free / grace period runs from the clock start; nothing is
+ *      charged inside it                           → `freeDays`
+ *   4. chargeable period = dwell − free period     → `chargeableDays`,
+ *      i.e. `Math.max(0, totalDays - freeDays)`
+ *
+ * Step 4 clamps at zero rather than going negative: cargo still inside its
+ * free period has no chargeable days, not a credit. Section 82 is measured
+ * on total dwell, not on the chargeable remainder — the statutory clock
+ * does not pause for the grace period.
+ *
+ * Pass `AWB.intakeAt` as `clockStartedAt`. Passing flight arrival bills the
+ * shed for time the cargo was still on the ramp.
+ */
 export function dwell(
-  arrivedAt: string,
+  clockStartedAt: string,
   asOf: string,
   freeDays: number,
   section82Days: number,
 ): DwellState {
-  const totalDays = daysBetween(arrivedAt, asOf);
+  const totalDays = daysBetween(clockStartedAt, asOf);
   return {
-    arrivedAt,
+    clockStartedAt,
     asOf,
     totalDays,
     freeDays,

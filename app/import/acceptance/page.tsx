@@ -19,6 +19,7 @@ import {
   BadgeCheck,
   Camera,
   CheckCircle2,
+  Database,
   PackageCheck,
   Plane,
   ScanLine,
@@ -42,6 +43,39 @@ import {
   variance,
   volumetricKg,
 } from "@/lib/domain";
+
+/**
+ * CMTS acceptance lineage.
+ *
+ * This screen writes `IMPORTAWBDETAIL` and nothing else, which is why the
+ * worksheet below carries that one table's name. But CMTS does not record the
+ * acceptance *event* there — it records it in a separate trio, and absorbing
+ * the legacy cargo-acceptance screen means absorbing those three tables too.
+ *
+ * The trio is cited on the export side (`app/export/acceptance`) and nowhere
+ * on the import side, which left the migration reading as though
+ * CARGOACCEPTANCE had no import counterpart. It does: this is the screen. A
+ * reader tracing a legacy column has to be able to land here, so the lineage
+ * is named on the screen rather than only in the domain layer.
+ */
+const CMTS_SOURCE_TABLES = [
+  {
+    table: "CARGOACCEPTANCE",
+    meaning: "Acceptance header — receiving agent, station, timestamp, sign-off",
+  },
+  {
+    table: "ACCEPTENCEDETAIL",
+    meaning: "Per-line nature of goods, pieces, weight and dimensions",
+  },
+  {
+    table: "CARGOACCEPTANCEHWB",
+    meaning: "House breakdown when the accepted consignment is a consolidation",
+  },
+  {
+    table: "IMPORTAWBDETAIL",
+    meaning: "The import receipt itself — 32 columns, rendered above",
+  },
+];
 
 export default function AcceptancePage() {
   const { scope } = useSite();
@@ -581,6 +615,30 @@ export default function AcceptancePage() {
         <span className="text-[12px] text-[#94A3B8]">
           Total accepted: {formatKg(details.reduce((n, d) => n + d.RECEIVEDWT, 0))}
         </span>
+      </div>
+
+      {/* CMTS source tables — see CMTS_SOURCE_TABLES above for why the
+          acceptance trio is named here and not only on the export side. */}
+      <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+          <Database size={15} className="text-[#64748B]" />
+          <div>
+            <h3 className="text-[14px] font-semibold text-[#0F172A]">CMTS source tables</h3>
+            <p className="text-[11px] text-[#94A3B8]">
+              What this screen absorbs from the legacy cargo-acceptance module
+            </p>
+          </div>
+        </div>
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-2.5">
+          {CMTS_SOURCE_TABLES.map((t) => (
+            <div key={t.table} className="flex items-baseline gap-2">
+              <span className="font-mono text-[11px] font-semibold text-[#1B4F8B] flex-shrink-0">
+                {t.table}
+              </span>
+              <span className="text-[11px] text-[#64748B]">{t.meaning}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

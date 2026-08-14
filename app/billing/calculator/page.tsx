@@ -3,8 +3,8 @@
 /**
  * P5-2 · Charges Calculator — FC-07 §01–08, computed end to end.
  *
- * The existing `/cmts-absorption/charges-calculator` renders a form that
- * computes nothing. This one shows the actual arithmetic, step by step,
+ * The CMTS preview screen this replaces rendered a form that computed
+ * nothing. This one shows the actual arithmetic, step by step,
  * because the FC-07 amendment makes charges **auto-computed from a
  * versioned Tariff Master** — and an auto-computed number that nobody can
  * audit is worse than a typed one.
@@ -18,11 +18,26 @@
  *   §06  Chargeable weight **rounds up to the next 0.5 kg** per IATA.
  *        231.6 → 232.0, and 232.0 x 330 = 76,560 matches the printed total
  *        on the document exactly. Without the round-up it does not.
+ *
+ * CMTS ATTRIBUTION
+ * ----------------
+ * That preview screen computed nothing, but it did carry one thing this screen
+ * did not: **which CMTS table each rule came from**.
+ * Seven rules, seven sources — CARGOCLASS·Lookup, AWBINFORMATION,
+ * CARGOSUBCLASSCHARGES, CargoClassCharges, LOCATIONCHARGES, the manual waiver
+ * workflow and Section82Days·Setting. This screen named only Section82Days, so
+ * every other rule's lineage back to the system being replaced was invisible.
+ *
+ * That lineage is not decoration during a migration: when a computed number is
+ * disputed, the first question is which legacy table the rule came from, and
+ * the second is whether AirVault still reads it the same way. `CMTS_RULES`
+ * below answers the first for all seven, and each `Step` carries its own source
+ * chip so the answer sits next to the arithmetic rather than in a footnote.
  */
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowUpRight, Calculator, Info, Layers, Scale, Timer } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Calculator, Database, Info, Layers, Scale, Timer } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
@@ -39,15 +54,35 @@ import {
   roundUpHalfKg,
 } from "@/lib/domain";
 
+/**
+ * The CMTS table(s) a rule was read from, rendered wherever that rule is
+ * computed. Uppercase identifiers are the legacy column/table names and are
+ * reproduced exactly — they are migration parity, not a naming style.
+ */
+function SourceChip({ source }: { source: string }) {
+  return (
+    <span
+      className="h-[20px] px-2 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center gap-1 font-mono whitespace-nowrap"
+      title={`CMTS source: ${source}`}
+    >
+      <Database size={10} />
+      {source}
+    </span>
+  );
+}
+
 function Step({
   no,
   title,
   note,
+  source,
   children,
 }: {
   no: string;
   title: string;
   note?: string;
+  /** The CMTS table this step's rule was read from in the legacy system. */
+  source?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -56,15 +91,80 @@ function Step({
         <span className="h-[22px] min-w-[38px] px-2 rounded bg-[#EBF0F7] text-[#1B4F8B] text-[10px] font-bold inline-flex items-center justify-center font-mono flex-shrink-0 mt-0.5">
           {no}
         </span>
-        <div>
+        <div className="flex-1">
           <h3 className="text-[14px] font-semibold text-[#0F172A]">{title}</h3>
           {note && <p className="text-[11px] text-[#94A3B8] mt-0.5">{note}</p>}
         </div>
+        {source && <SourceChip source={source} />}
       </div>
       <div className="p-5">{children}</div>
     </div>
   );
 }
+
+/**
+ * The seven legacy rules, each tied to the CMTS table it was read from and to
+ * the FC-07 step on this page that now computes it. Ported from the legacy
+ * charges calculator, which listed the rules but did no arithmetic; here the
+ * arithmetic is real and this table is the provenance index over it.
+ */
+const CMTS_RULES: Array<{
+  no: number;
+  rule: string;
+  source: string;
+  computedAt: string;
+  formula: string;
+}> = [
+  {
+    no: 1,
+    rule: "Free period",
+    source: "CARGOCLASS · Lookup",
+    computedAt: "§01–03",
+    formula: "freeDays = CARGOCLASS.freeDays for the consignment's class",
+  },
+  {
+    no: 2,
+    rule: "Chargeable weight",
+    source: "AWBINFORMATION",
+    computedAt: "§04–06",
+    formula: "roundUp₀.₅(max(actual, volumetric))",
+  },
+  {
+    no: 3,
+    rule: "Base rate per slab",
+    source: "CARGOSUBCLASSCHARGES",
+    computedAt: "§08",
+    formula: "daysInBand × ratePerKgPerDay × chargeableKg, per band",
+  },
+  {
+    no: 4,
+    rule: "Class surcharge",
+    source: "CargoClassCharges",
+    computedAt: "§07",
+    formula: "percent% × storage base",
+  },
+  {
+    no: 5,
+    rule: "Location surcharge",
+    source: "LOCATIONCHARGES",
+    computedAt: "Charge components",
+    formula: "chargeableDays × locationChargePerDay",
+  },
+  {
+    no: 6,
+    rule: "Customs hold waiver",
+    source: "Manual waiver workflow",
+    computedAt: "Charge components",
+    formula: "−percent% × applicable slab",
+  },
+  {
+    no: 7,
+    rule: "Section 82 trigger check",
+    source: "Section82Days · Setting",
+    computedAt: "§01–03",
+    formula: "dwell > Section82Days → escalate",
+  },
+];
 
 function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
@@ -100,7 +200,7 @@ export default function ChargesCalculatorPage() {
    * calculator still applied. Presentational, static — sourced from the CMTS
    * settings the way the legacy screen read them.
    */
-  const customsHoldWaiver = { percent: 20, amount: 5300, source: "manual waiver" };
+  const customsHoldWaiver = { percent: 20, amount: 5300, source: "Manual waiver workflow" };
   const section82Days = 20;
   const section82Threshold = 14;
   const section82Flagged = section82Days > section82Threshold;
@@ -188,23 +288,55 @@ export default function ChargesCalculatorPage() {
               {/* §01–03 dwell clock */}
               <Step
                 no="§01–03"
-                title="Arrival, free period, storage clock"
-                note="The clock starts at arrival, not at acceptance — FC-07 §01."
+                title="Intake, storage clock, free period"
+                note="§02 starts the clock at cargo intake, not at flight arrival; §03's free band runs from there and §03a charges only what is left."
+                source="CARGOCLASS · Lookup"
               >
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {/*
+                  Five tiles in event order. Arrival is shown first because it is
+                  the event operators recognise, but it is immediately followed
+                  by the clock start so the gap between them is legible — that
+                  gap is the handler's time on the ramp and is never billed.
+                */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                   {[
-                    ["Arrived", formatDate(c.arrivalAt)],
-                    ["Total days", `${c.totalDays}`],
-                    ["Free days", `${c.freeDays}`],
-                    ["Chargeable days", `${c.chargeableDays}`],
-                  ].map(([l, v]) => (
+                    ["Arrived (flight)", formatDate(c.arrivalAt), "#94A3B8"],
+                    ["Clock started (intake)", formatDate(c.clockStartedAt), "#0F172A"],
+                    ["Total days", `${c.totalDays}`, "#0F172A"],
+                    ["Free days", `${c.freeDays}`, "#16A34A"],
+                    ["Chargeable days", `${c.chargeableDays}`, "#D97706"],
+                  ].map(([l, v, tone]) => (
                     <div key={l}>
                       <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
                         {l}
                       </p>
-                      <p className="text-[18px] font-bold text-[#0F172A] mt-0.5 font-mono">{v}</p>
+                      <p
+                        className="text-[16px] font-bold mt-0.5 font-mono"
+                        style={{ color: tone }}
+                      >
+                        {v}
+                      </p>
                     </div>
                   ))}
+                </div>
+
+                {/*
+                  Rule 1 of the legacy cascade, restated against real values. The
+                  legacy screen wrote "Free days = 3 (per CARGOCLASS lookup)" as
+                  a constant; here the 3 comes off the class the AWB actually
+                  carries, which is the whole difference between a mock-up and a
+                  computation.
+                */}
+                <div className="mt-4 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+                  <p className="font-mono text-[12px] text-[#0F172A]">
+                    freeDays = {c.freeDays} · CARGOCLASS ·{" "}
+                    {cargoClass(awb.CARGOCLASSID).ABBREVATION}
+                  </p>
+                  <p className="text-[11px] text-[#64748B] mt-1">
+                    chargeable = max(0, {c.totalDays} − {c.freeDays})
+                    {c.supplementDays > 0 ? ` + ${c.supplementDays} supplement` : ""} ={" "}
+                    {c.chargeableDays} days
+                  </p>
                 </div>
                 {c.supplementDays > 0 && (
                   <div className="mt-4 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] px-4 py-3 flex items-start gap-2.5">
@@ -219,10 +351,13 @@ export default function ChargesCalculatorPage() {
                   <div className="mt-4 rounded-xl border border-[#FCA5A5] bg-[#FEF2F2] px-4 py-3 flex items-start gap-2.5">
                     <AlertTriangle size={14} className="text-[#DC2626] flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-[12px] font-semibold text-[#991B1B]">
-                        Section 82 — dwell {section82Days} days &gt; {section82Threshold}-day
-                        threshold → escalation flagged
-                      </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-[12px] font-semibold text-[#991B1B]">
+                          Section 82 — dwell {section82Days} days &gt; {section82Threshold}-day
+                          threshold → escalation flagged
+                        </p>
+                        <SourceChip source="Section82Days · Setting" />
+                      </div>
                       <p className="text-[11px] text-[#B91C1C] mt-0.5">
                         The Section82Days setting trips the customs-escalation trigger; the AWB is
                         referred for Section 82 action before the charge is closed.
@@ -237,6 +372,7 @@ export default function ChargesCalculatorPage() {
                 no="§04–06"
                 title="Actual, volumetric and chargeable weight"
                 note="Volumetric divisor is unit-dependent; chargeable rounds up to the next 0.5 kg."
+                source="AWBINFORMATION"
               >
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {[
@@ -314,6 +450,7 @@ export default function ChargesCalculatorPage() {
                 no="§07"
                 title="Category surcharge"
                 note="Applied on the storage base, by cargo class."
+                source="CargoClassCharges"
               >
                 {c.surcharges.length === 0 ? (
                   <p className="text-[12px] text-[#94A3B8]">
@@ -348,6 +485,7 @@ export default function ChargesCalculatorPage() {
                 no="§08"
                 title="Tariff slab breakdown"
                 note="A stay crossing a band boundary is split across bands — not billed at the top rate."
+                source="CARGOSUBCLASSCHARGES"
               >
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[520px]">
@@ -402,7 +540,21 @@ export default function ChargesCalculatorPage() {
                 <div className="p-5">
                   <Row label="Storage" value={formatPkr(c.storageAmount)} />
                   <Row label="Handling" value={formatPkr(c.handlingAmount)} />
-                  <Row label="Location charges" value={formatPkr(c.locationChargesAmount)} />
+                  {/*
+                    Rule 5 of the legacy cascade. LOCATIONCHARGES priced the
+                    zone the cargo actually sat in — a vault or a cold room is
+                    not a rack — so the source is called out inline rather than
+                    left to the footer; a location surcharge is the line most
+                    often queried by a consignee.
+                  */}
+                  <div className="flex items-baseline justify-between gap-3 py-1">
+                    <span className="text-[12px] text-[#64748B] inline-flex items-center gap-2">
+                      Location charges <SourceChip source="LOCATIONCHARGES" />
+                    </span>
+                    <span className="font-mono text-[13px] font-medium text-[#334155]">
+                      {formatPkr(c.locationChargesAmount)}
+                    </span>
+                  </div>
                   <Row label="Documentation" value={formatPkr(c.documentationCharges)} />
                   <Row label="Deconsolidation" value={formatPkr(c.deconsolidationCharges)} />
                   <Row label="Special handling" value={formatPkr(c.specialHandlingCharges)} />
@@ -410,9 +562,15 @@ export default function ChargesCalculatorPage() {
                   {c.minimumCharges > 0 && (
                     <Row label="Minimum charge floor applied" value={formatPkr(c.minimumCharges)} />
                   )}
+                  {/*
+                    Rule 6. The only rule of the seven with no CMTS table behind
+                    it — the waiver was a manual act, which is precisely why
+                    FC-07 §10–12 gives it an approval chain. Labelling its source
+                    honestly is more useful than inventing a table name for it.
+                  */}
                   <div className="flex items-baseline justify-between gap-3 py-1">
-                    <span className="text-[12px] text-[#DC2626]">
-                      Customs hold waiver · {customsHoldWaiver.source}
+                    <span className="text-[12px] text-[#DC2626] inline-flex items-center gap-2">
+                      Customs hold waiver <SourceChip source={customsHoldWaiver.source} />
                     </span>
                     <span className="font-mono text-[13px] font-medium text-[#DC2626]">
                       −{customsHoldWaiver.percent}% × applicable slab = −{formatPkr(
@@ -439,9 +597,85 @@ export default function ChargesCalculatorPage() {
                 </div>
               </div>
 
+              {/*
+                Rule → CMTS table → where it is computed. Ported from the legacy
+                charges calculator, which is the only place this mapping ever
+                existed. Kept as one table rather than scattered footnotes so a
+                reviewer can check all seven rules have a named source in a
+                single pass — an unattributed rule is the thing to catch.
+              */}
+              <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+                  <Database size={15} className="text-[#64748B]" />
+                  <div>
+                    <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                      Rule attribution — which CMTS table each rule came from
+                    </h3>
+                    <p className="text-[11px] text-[#94A3B8]">
+                      The legacy calculator&rsquo;s seven-rule cascade, mapped onto the FC-07 step
+                      that now computes it.
+                    </p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px]">
+                    <thead>
+                      <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
+                        {["#", "Rule", "CMTS source", "Computed at", "Formula"].map((h) => (
+                          <th
+                            key={h}
+                            className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap"
+                          >
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {CMTS_RULES.map((r) => (
+                        <tr key={r.no} className="border-b border-[#F1F5F9] last:border-0">
+                          <td className="px-3 py-2.5 font-mono text-[12px] text-[#94A3B8]">
+                            {r.no}
+                          </td>
+                          <td className="px-3 py-2.5 text-[12px] font-medium text-[#0F172A] whitespace-nowrap">
+                            {r.rule}
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap">
+                            <SourceChip source={r.source} />
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap">
+                            <span className="h-[20px] px-2 rounded bg-[#EBF0F7] text-[#1B4F8B] text-[10px] font-bold inline-flex items-center font-mono">
+                              {r.computedAt}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-[11.5px] text-[#475569]">
+                            {r.formula}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+                  <p className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider mb-1">
+                    CMTS source tables
+                  </p>
+                  <code className="text-[12px] text-[#475569] font-mono break-words">
+                    CHARGECALCULATER · CHARGETYPE · LOCATIONCHARGES · CARGOSUBCLASSCHARGES ·
+                    CargoClassCharges · Lookup
+                  </code>
+                </div>
+              </div>
+
               <div className="flex items-center gap-3 flex-wrap">
+                {/*
+                  * This pointed at /billing/tariff, which has never existed — app/billing
+                  * holds only calculator, delivery-order, godown-rent and invoice, so the
+                  * link 404'd. The versioned rate card this calculator actually prices
+                  * against is the FC-07 Tariff Master, and that lives under finance.
+                  */}
                 <Link
-                  href="/billing/tariff"
+                  href="/finance-manager/tariff-master-editor"
                   className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B4F8B] no-underline hover:underline"
                 >
                   Tariff master <ArrowUpRight size={12} />

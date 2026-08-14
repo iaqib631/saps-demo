@@ -117,8 +117,14 @@ export default function DeliveryOrderPage() {
                     <p className="text-[11px] text-[#64748B] mt-0.5">
                       {x.AWBNO} · {formatPkr(x.AMOUNT)}
                     </p>
+                    {/* 22a vs 22b. A requested DO has no issue date yet, so show
+                        the request rather than a blank where a date should be. */}
                     <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                      {formatDate(x.DODATE)} · {x.RECIEVEDBY}
+                      {x.DODATE
+                        ? `Issued ${formatDate(x.DODATE)}`
+                        : `Requested ${formatDate(x.requestedAt)} — awaiting issue`}
+                      {" · "}
+                      {x.RECIEVEDBY}
                     </p>
                   </button>
                 );
@@ -150,7 +156,11 @@ export default function DeliveryOrderPage() {
                     <p className="text-[12px] text-[#64748B] mt-1.5">
                       {awb && <AwbLink awbNo={awb.AWBNO} awbId={awb.AWBId} />}
                       {" · "}
-                      {cargoClass(d.DOCARGOCLASSID).ABBREVATION} · issued {formatDate(d.DODATE)}
+                      {cargoClass(d.DOCARGOCLASSID).ABBREVATION}
+                      {" · "}
+                      {d.DODATE
+                        ? `issued ${formatDate(d.DODATE)}`
+                        : `requested ${formatDate(d.requestedAt)}, awaiting issue`}
                     </p>
                   </div>
                   <div className="text-right">

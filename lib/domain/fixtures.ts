@@ -65,19 +65,24 @@ import {
   type PaymentRecord,
   type WaiverRequest,
 } from "./finance";
-import type {
-  ClosureChecklistItem,
-  ClosureState,
-  GateOutCheck,
-  GatePass,
-  PickLine,
-  PickSession,
-  ProofOfDelivery,
+import {
+  PICK_CDR_ORIGIN,
+  gateOutOutcome,
+  pickSessionCdrTrigger,
+  type ClosureChecklistItem,
+  type ClosureState,
+  type GateOutCheck,
+  type GatePass,
+  type PickLine,
+  type PickSession,
+  type ProofOfDelivery,
 } from "./dispatch";
 import {
   EXCEPTION_THRESHOLD_DAYS,
   type CDR,
   type CdrDispatch,
+  type CdrOrigin,
+  type CdrSourceRef,
   type CdrFinalAction,
   type CdrStatus,
   type DamageDetail,
@@ -93,6 +98,8 @@ import {
 import {
   RISK_CHANNEL_LABEL,
   dutyTotal,
+  oocMismatches,
+  oocVerified,
   type AgencyClearance,
   type AwbInformation,
   type CustomsClearance,
@@ -373,6 +380,18 @@ function buildAwbs(): AWB[] {
     });
 
     const arrivedAt = daysAgo(seed.arrivedDaysAgo, 7, 45);
+
+    // FC-07 §01/§02 — intake is a separate event from the flight landing, and
+    // the storage clock hangs off intake. Breakdown, the ramp queue and
+    // off-hours handovers put real hours between the two, so the seeds model
+    // the gap instead of collapsing it: most cargo is taken into the shed the
+    // same afternoon, every third consignment not until the next morning. A
+    // zero gap would hide exactly the period nothing may be charged for.
+    const intakeNextMorning = i % 3 === 2;
+    const intakeAt = intakeNextMorning
+      ? daysAgo(Math.max(0, seed.arrivedDaysAgo - 1), 9, 30)
+      : daysAgo(seed.arrivedDaysAgo, 14, 20);
+
     const reachedDo = hasReached(seed.stage, "do-issued");
 
     // FC-01 05e — declared (OCR) vs physical (received).
@@ -472,6 +491,7 @@ function buildAwbs(): AWB[] {
       intakeVariance,
       cdrRaised: seed.branch === "cdr" || (intakeVariance?.pieces.overTolerance ?? false),
       arrivedAt,
+      intakeAt,
     } satisfies AWB;
   });
 }
@@ -765,12 +785,16 @@ export const ARRIVAL_ADVICES: ArrivalAdvice[] = AWBS.filter((a) => hasReached(a.
  * ------------------------------------------------------------------ */
 
 export const CHARGE_CALCULATIONS = AWBS.filter((a) => hasReached(a.stage, "charged")).map((a) => {
-  const totalDays = daysBetween(a.arrivedAt, DEMO_NOW);
   const dims = { lengthCm: 120, widthCm: 80, heightCm: 90, unit: "cm" };
   return calculateCharges({
     awbId: a.AWBId,
     arrivalAt: a.arrivedAt,
-    totalDays,
+    // The two endpoints, not a pre-computed day count. Handing the calculator a
+    // `totalDays` measured from flight arrival is what billed the gap between
+    // the aircraft landing and the cargo reaching the shed; the clock starts at
+    // intake, and only the calculator gets to say how long it has run.
+    intakeAt: a.intakeAt,
+    asOf: DEMO_NOW,
     cargoClassId: a.CARGOCLASSID,
     cargoSubClassId: a.cargoSubClassId,
     actualKg: a.TOTALWEIGHT,
@@ -881,7 +905,43 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
 );
 
 export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.stage, "do-issued")).map(
-  (a, i) => ({
+  (a, i) => {
+    const gr = GODOWN_RENTS.find((g) => g.AWBNO === a.AWBNO);
+    const authLetterNo = `AL-2026-${String(1440 + i)}`;
+    const issuedAt = a.DODATE;
+
+    // FC-01 §22a — the CHA raises the request off the NOA, so the request is
+    // anchored to the advice rather than invented. ARRIVAL_ADVICES puts the
+    // notice at (dwell − 1) days at 09:00; the request follows it the same
+    // morning and the terminal issues at 10:30, which keeps
+    // advice -> request -> issue in that order for every seed, including the
+    // one-day-old AWBs where all three land on the same date.
+    const advice = ARRIVAL_ADVICES.find((ad) => ad.AWBNO === a.AWBNO) ?? null;
+    const requestedAt = daysAgo(Math.max(0, daysBetween(a.arrivedAt, DEMO_NOW) - 1), 9, 40);
+
+    // FC-01 §22b — the conditions as they read at issuance, frozen. Evaluated
+    // here rather than fetched from `releaseGateFor` for two reasons: that
+    // helper reads HOLDS, which is declared further down this file and would be
+    // in the temporal dead zone at module init; and it answers "is this cargo
+    // releasable now", which is a different question from "what was true when
+    // authority was granted". Screens must render this, not a live re-run.
+    const gate = evaluateReleaseGate(a.AWBId, {
+      oocIssued: true,
+      oocRef: `OOC-${a.site}-2026-${String(9100 + a.AWBId)}`,
+      oocVerifiedVsSd: true,
+      oocMismatchCount: 0,
+      oocVerifiedAt: daysAgo(Math.max(0, daysBetween(a.arrivedAt, DEMO_NOW) - 1), 12, 5),
+      oocVerifiedBy: "customs.liaison",
+      authorityLetterNo: authLetterNo,
+      chargesPaid: gr?.PAID ?? true,
+      outstanding: gr && !gr.PAID ? gr.NETPAYABLE : 0,
+      onHold: a.HOLDINGSTATUS,
+      holdReason: null,
+      cargoClassId: a.CARGOCLASSID,
+      specialClearanceDone: true,
+    });
+
+    return {
     ...audit(2, "do.desk"),
     ...siteKeys(a.site),
     DoId: i + 1,
@@ -897,7 +957,21 @@ export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.
       cargoClassId: a.CARGOCLASSID,
       continuesFromCmts: 3099,
     },
-    DODATE: a.DODATE!,
+
+    // Every seeded DO is past 22b — the filter is `do-issued` — so all of them
+    // carry an issue timestamp and a gate snapshot. `collected` is the ones the
+    // CHA has since picked up at the counter (FC-02 §33), which is any AWB that
+    // went on to draw a gate pass.
+    status: hasReached(a.stage, "gate-pass") ? "collected" : "issued",
+    requestedAt,
+    requestedBy: a.AGENT1 ?? a.CONSIGNEE1,
+    requestedAgainstNoaAt: advice?.ADVICEDATE ?? null,
+    issuedAt,
+    issuedBy: "do.desk",
+    gateEvaluatedAt: issuedAt,
+    gateSnapshot: gate.conditions,
+
+    DODATE: a.DODATE,
     DOTYPE: "NORMAL",
     DOCARGOCLASSID: a.CARGOCLASSID,
     AMOUNT: a.DOAMOUNT,
@@ -912,7 +986,7 @@ export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.
     AuthAgentCNIC: "42201-7788990-1",
     AuthAgentPhone: "+92 300 2244660",
     AuthAgentEmail: "imran@skybridge.pk",
-    AuthLetterNo: `AL-2026-${String(1440 + i)}`,
+    AuthLetterNo: authLetterNo,
     AuthAgentPic: `/mock/auth-agent-${(i % 3) + 1}.jpg`,
     NTN: PARTIES.find((p) => p.NAME === a.CONSIGNEE1)?.NTN ?? null,
     STN: PARTIES.find((p) => p.NAME === a.CONSIGNEE1)?.STN ?? null,
@@ -925,7 +999,8 @@ export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.
     IsLock: a.Lock,
     DetendIdentification: a.DetendUniqueIdentification,
     site: a.site,
-  }),
+    } satisfies DeliveryOrder;
+  },
 );
 
 export const INVOICES: Invoice[] = GODOWN_RENTS.map((g, i) => ({
@@ -1092,9 +1167,32 @@ export function releaseGateFor(awbId: number) {
   if (!a) return null;
   const inv = INVOICES.find((x) => x.awbId === awbId);
   const hold = HOLDS.find((h) => h.AWBNo === a.AWBNO && !h.Release);
+
+  // Read the actual Out-of-Charge record, not the lifecycle stage.
+  //
+  // Deriving this from `hasReached(a.stage, …)` was the original defect: the
+  // stage says how far the consignment has travelled, which is not the same
+  // question as whether anybody reconciled the OOC against the declaration it
+  // discharges. A stage-derived answer cannot see a field mismatch at all, so
+  // an OOC that disagrees with its SD would have read as verified purely by
+  // having moved far enough down the flow.
+  //
+  // `oocVerified` / `oocMismatches` are the same helpers FC-06's clearance gate
+  // uses (customs.ts), so both gates now answer from one record and cannot
+  // disagree about the same AWB.
+  const clearance = clearanceFor(awbId);
+  const ooc = clearance?.ooc ?? null;
+  const oocIssued = !!ooc;
+  const verifiedVsSd = !!ooc && oocVerified(ooc);
+  const mismatches = ooc ? oocMismatches(ooc) : [];
+
   return evaluateReleaseGate(awbId, {
-    oocIssued: hasReached(a.stage, "customs") && a.branch !== "re-export",
-    oocRef: hasReached(a.stage, "customs") ? `OOC-2026-${String(9100 + awbId)}` : null,
+    oocIssued,
+    oocRef: ooc?.oocNo ?? null,
+    oocVerifiedVsSd: verifiedVsSd,
+    oocMismatchCount: mismatches.length,
+    oocVerifiedAt: ooc?.verifiedAt ?? null,
+    oocVerifiedBy: ooc?.verifiedBy ?? null,
     authorityLetterNo: hasReached(a.stage, "do-issued") ? `AL-2026-${String(1440 + awbId)}` : null,
     chargesPaid: inv?.status === "paid",
     outstanding: inv?.outstanding ?? 0,
@@ -1198,6 +1296,13 @@ export const PICK_SESSIONS: PickSession[] = GATE_PASSES.map((gp, gi) => {
   });
 
   const scanned = lines.filter((l) => l.outcome === "retrieved").length;
+  const countMatched = scanned === pieces.length;
+
+  // FC-08 §09–10: a short pick routes to FC-04, it does not just stop. The
+  // fixture asks the domain for the verdict instead of asserting one, so a
+  // seeded session cannot claim a clean pick over lines that say otherwise.
+  const trigger = pickSessionCdrTrigger({ countMatched, lines });
+
   return {
     gatePassNo: gp.GATEPASSNO,
     awbId: awb.AWBId,
@@ -1206,9 +1311,14 @@ export const PICK_SESSIONS: PickSession[] = GATE_PASSES.map((gp, gi) => {
     lines,
     expectedPieces: pieces.length,
     scannedPieces: scanned,
-    countMatched: scanned === pieces.length,
-    // FC-08: a short pick routes to FC-04, it does not just stop.
-    cdrRef: shortOne ? "CDR-KHI-2026-00322" : null,
+    countMatched,
+    cdrRequired: trigger.required,
+    cdrReason: trigger.reason,
+    // CDRS mints this record further down the file, at sequence 323 against
+    // this same AWB — see the dispatch-origin selection there. The number is
+    // repeated rather than shared because the CDR pool is built after the pick
+    // sessions it reads; if either end moves, both move.
+    cdrRef: trigger.required ? `CDR-${awb.site}-2026-00323` : null,
   } satisfies PickSession;
 });
 
@@ -1231,29 +1341,53 @@ export const GATE_OUT_CHECKS: GateOutCheck[] = GATE_PASSES.map((gp, gi) => {
   const staleRelease = gi === 2;
   const missing = expected.filter((t) => !scanned.includes(t));
 
+  // The fourth pass is the damage route into FC-04 — every tag present and
+  // correct, release still valid, and the cargo still not fit to leave. It sits
+  // on its own pass deliberately: on top of the short pick or the stale release
+  // it would prove nothing, because the exit was already blocked.
+  const damagedPieceIds = gi === 3 ? session.lines.slice(0, 1).map((l) => l.pieceId) : [];
+  const damageFound = damagedPieceIds.length > 0;
+  const damageNote = damageFound
+    ? "Forklift strike to the pallet base found on the loaded vehicle; shrink-wrap torn."
+    : null;
+
+  const check = {
+    tagsMatched: missing.length === 0,
+    extraTags: [] as string[],
+    missingTags: missing,
+    releaseStillValid: !staleRelease,
+    newlyFailedConditions: staleRelease ? ["not-on-hold"] : [],
+    damageFound,
+    damageNote,
+    damagedPieceIds,
+  };
+
   return {
     gatePassNo: gp.GATEPASSNO,
     checkedAt: daysAgo(1, 9, 30),
     checkedBy: "gate.security",
     scannedTags: scanned,
     expectedTags: expected,
-    tagsMatched: missing.length === 0,
-    extraTags: [],
-    missingTags: missing,
-    releaseStillValid: !staleRelease,
-    newlyFailedConditions: staleRelease ? ["not-on-hold"] : [],
-    outcome: missing.length === 0 && !staleRelease ? "cleared" : "blocked",
-    blockReason: staleRelease
-      ? "A customs hold was placed after this gate pass was issued — release is no longer valid."
-      : missing.length > 0
-        ? `${missing.length} tag(s) on the gate pass were not read on the vehicle.`
-        : null,
+    ...check,
+    // Composed by the domain helper rather than restated here. The fixture used
+    // to carry its own copy of the rule, which is how a blocked exit could show
+    // one reason on screen while a second — equally blocking — went unmentioned
+    // and sent the vehicle back to the gate twice.
+    ...gateOutOutcome(check),
+    // Deliberately null on the damaged pass: this is the arm where the finding
+    // exists and the CDR does not yet, which is the state the gate actually
+    // sits in for the minutes between the inspection and the paperwork.
+    // `gateOutOutcome` already blocks the exit over it and says a CDR is
+    // required, so nothing leaves on an unraised discrepancy.
+    cdrRef: null,
   } satisfies GateOutCheck;
 });
 
 export const PODS: ProofOfDelivery[] = AWBS.filter((a) => hasReached(a.stage, "delivered")).map(
   (a, i) => {
     const gp = GATE_PASSES.find((g) => g.AWBNO === a.AWBNO)!;
+    const damageAtHandover = i === 1;
+    const handoverCdrRef = `CDR-${a.site}-2026-${String(320).padStart(5, "0")}`;
     return {
       id: i + 1,
       awbId: a.AWBId,
@@ -1270,6 +1404,16 @@ export const PODS: ProofOfDelivery[] = AWBS.filter((a) => hasReached(a.stage, "d
       photos: ["/mock/pod-1.jpg", "/mock/pod-2.jpg"],
       timestamp: daysAgo(1, 15, 12),
       geo: { lat: 24.9065, lng: 67.1608, accuracyM: 8 },
+      // The second handover is the one that went wrong at the tailgate. It is
+      // kept complete rather than left open because the CDR exists — that is
+      // the whole shape of the rule in `podComplete`: damage does not stop a
+      // POD closing, an unrecorded discrepancy does. A fixture that carried the
+      // damage without the CDR would only ever exercise the failing branch.
+      damageAtHandover: damageAtHandover,
+      damageNote: damageAtHandover
+        ? "Two cartons scuffed and one corner crushed; noted by the receiver before signing."
+        : null,
+      cdrRef: damageAtHandover ? handoverCdrRef : null,
       complete: true,
       partial: false,
       dlvSentAt: daysAgo(1, 15, 14),
@@ -1369,6 +1513,14 @@ const CDR_AWB = AWBS.find((a) => a.branch === "cdr")!;
 
 const CDR_SEED: Array<{
   type: DiscrepancyType;
+  /**
+   * Which decision raised it. Stated per row rather than inferred from `type`
+   * or `auto`, because the inference does not exist: intake and picking both
+   * raise `shortage`, and a damage CDR can come off the gate-out inspection or
+   * off the receiver's signature. Guessing here is how the workbench would end
+   * up filtering "raised at picking" and returning intake rows.
+   */
+  origin: CdrOrigin;
   status: CdrStatus;
   auto: boolean;
   /** §08 dispatch rounds; index 0 is the original send. */
@@ -1381,34 +1533,34 @@ const CDR_SEED: Array<{
   evidence: EvidenceKind[];
   detail: string;
 }> = [
-  { type: "shortage", status: "awaiting-instruction", auto: true, rounds: 3, instructionOnRound: null, finalAction: null, closed: false, customsNotified: false,
+  { type: "shortage", origin: "intake-variance", status: "awaiting-instruction", auto: true, rounds: 3, instructionOnRound: null, finalAction: null, closed: false, customsNotified: false,
     evidence: ["photo", "piece-count", "weight", "seal-condition", "package-condition", "remarks"],
     detail: "17 pieces received against 20 declared; shortage consistent with the FFM count." },
-  { type: "overage", status: "closed", auto: true, rounds: 1, instructionOnRound: 1, finalAction: "F2-adjust-pieces-weight", closed: true, customsNotified: true,
+  { type: "overage", origin: "intake-variance", status: "closed", auto: true, rounds: 1, instructionOnRound: 1, finalAction: "F2-adjust-pieces-weight", closed: true, customsNotified: true,
     evidence: ["photo", "piece-count", "weight", "remarks"],
     detail: "2 pieces over manifest; airline confirmed a mis-split at origin." },
-  { type: "damage", status: "action-selected", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F4-re-export", closed: false, customsNotified: true,
+  { type: "damage", origin: "handover-damage", status: "action-selected", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F4-re-export", closed: false, customsNotified: true,
     evidence: ["photo", "package-condition", "weight", "piece-count", "remarks"],
     detail: "Water ingress through the outer carton; consignee refused acceptance." },
-  { type: "leakage-wet", status: "on-hold", auto: false, rounds: 2, instructionOnRound: null, finalAction: null, closed: false, customsNotified: true,
+  { type: "leakage-wet", origin: "intake-variance", status: "on-hold", auto: false, rounds: 2, instructionOnRound: null, finalAction: null, closed: false, customsNotified: true,
     evidence: ["photo", "package-condition", "weight", "remarks"],
     detail: "Drum seepage detected in the bonded aisle; pallet isolated." },
-  { type: "tampering", status: "notified", auto: false, rounds: 1, instructionOnRound: null, finalAction: null, closed: false, customsNotified: true,
+  { type: "tampering", origin: "intake-variance", status: "notified", auto: false, rounds: 1, instructionOnRound: null, finalAction: null, closed: false, customsNotified: true,
     evidence: ["photo", "seal-condition", "piece-count", "remarks"],
     detail: "ULD seal number does not match the FFM; seal cut and re-applied." },
-  { type: "pilferage", status: "closed", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F5-claim-liability", closed: true, customsNotified: true,
+  { type: "pilferage", origin: "picking-count", status: "closed", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F5-claim-liability", closed: true, customsNotified: true,
     evidence: ["photo", "piece-count", "weight", "package-condition", "seal-condition", "remarks"],
     detail: "Carton opened and re-taped; 4 units missing against the packing list." },
   // Deliberately thin — two kinds, nothing measured. This is the CMTS
   // remarks-only pattern the FC-04 amendment exists to replace, so the
   // closure gate must refuse it.
-  { type: "missing-documents", status: "evidence", auto: false, rounds: 0, instructionOnRound: null, finalAction: null, closed: false, customsNotified: false,
+  { type: "missing-documents", origin: "intake-variance", status: "evidence", auto: false, rounds: 0, instructionOnRound: null, finalAction: null, closed: false, customsNotified: false,
     evidence: ["photo", "remarks"],
     detail: "Shipper's invoice and fumigation certificate absent from the pouch." },
-  { type: "wrong-weight", status: "closed", auto: true, rounds: 1, instructionOnRound: 1, finalAction: "F1-release-after-correction", closed: true, customsNotified: false,
+  { type: "wrong-weight", origin: "intake-variance", status: "closed", auto: true, rounds: 1, instructionOnRound: 1, finalAction: "F1-release-after-correction", closed: true, customsNotified: false,
     evidence: ["weight", "piece-count", "photo", "remarks"],
     detail: "Scale reads 132 kg over the declared gross; re-weighed and corrected." },
-  { type: "misrouted", status: "action-selected", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F3-forward-mishandled", closed: false, customsNotified: true,
+  { type: "misrouted", origin: "intake-variance", status: "action-selected", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F3-forward-mishandled", closed: false, customsNotified: true,
     evidence: ["photo", "piece-count", "remarks", "package-condition"],
     detail: "Offloaded at KHI against an LHE routing; onward carriage required." },
 ];
@@ -1417,8 +1569,24 @@ export const CDRS: CDR[] = (() => {
   // The cdr-branch AWB first, then other AWBs carrying an intake variance.
   const pool = [CDR_AWB, ...AWBS.filter((a) => a.intakeVariance && a.AWBId !== CDR_AWB.AWBId)];
 
+  // A dispatch-origin CDR is attached to the AWB that actually holds the record
+  // it disputes, rather than taking the next one off the variance pool. The
+  // pool is assembled from AWBs with an intake variance, and most of those were
+  // never picked or delivered — a picking CDR against cargo that was never
+  // picked leaves `sourceRef` null, which is the exact state the pointer was
+  // added to make impossible, and leaves the workbench with nothing to open.
+  const pickCdrSession = PICK_SESSIONS.find((s) => s.cdrRequired) ?? null;
+  const damagedPod = PODS.find((p) => p.damageAtHandover) ?? null;
+
   return CDR_SEED.map((seed, i) => {
-    const awb = pool[i % pool.length];
+    const dispatchAwb =
+      seed.origin === "handover-damage"
+        ? (damagedPod ? (awbById(damagedPod.awbId) ?? null) : null)
+        : seed.origin === "intake-variance"
+          ? null
+          : (pickCdrSession ? (awbById(pickCdrSession.awbId) ?? null) : null);
+
+    const awb = dispatchAwb ?? pool[i % pool.length];
     const raisedDaysAgo = 6 - Math.floor(i / 2);
     const seq = 318 + i;
     const ref = `CDR-${awb.site}-2026-${String(seq).padStart(5, "0")}`;
@@ -1483,6 +1651,44 @@ export const CDRS: CDR[] = (() => {
       STORAGE_LOCATIONS.find((l) => l.CLASSID === 17) ??
       null;
 
+    // An intake CDR's subject is the AWB itself, so it has nothing further to
+    // point at. The three dispatch routes each dispute a specific record — the
+    // gate pass that was picked against, the piece that was not on the rack,
+    // the POD the receiver signed — and without that pointer the workbench can
+    // only offer the AWB, which is the one screen that does not show what went
+    // wrong. Resolved from the AWB's own dispatch records so the reference
+    // cannot name a gate pass that belongs to different cargo.
+    const pickSession = PICK_SESSIONS.find((s) => s.awbId === awb.AWBId);
+    const pod = PODS.find((p) => p.awbId === awb.AWBId);
+    const missingPieceId =
+      pickSession?.lines.find((l) => l.outcome === "unavailable")?.pieceId ?? null;
+
+    // The two picking routes are not interchangeable, and the session already
+    // decided which one it is — `pickSessionCdrTrigger` ran over its own lines.
+    // Reading that decision through PICK_CDR_ORIGIN rather than trusting the
+    // seed's guess keeps the CDR's origin and the session's reason from
+    // disagreeing about the same event.
+    const origin: CdrOrigin =
+      seed.origin === "intake-variance" || seed.origin === "handover-damage"
+        ? seed.origin
+        : pickSession?.cdrReason
+          ? PICK_CDR_ORIGIN[pickSession.cdrReason]
+          : "intake-variance";
+
+    const sourceRef: CdrSourceRef | null =
+      origin === "intake-variance"
+        ? null
+        : origin === "handover-damage"
+          ? pod
+            ? { gatePassNo: pod.gatePassNo, podId: pod.id }
+            : null
+          : pickSession
+            ? {
+                gatePassNo: pickSession.gatePassNo,
+                ...(missingPieceId ? { pieceId: missingPieceId } : {}),
+              }
+            : null;
+
     return {
       ...audit(raisedDaysAgo, "warehouse.supervisor"),
       ...siteKeys(awb.site),
@@ -1502,6 +1708,8 @@ export const CDRS: CDR[] = (() => {
       HWBNO: null,
       type: seed.type,
       autoRaised: seed.auto,
+      origin,
+      sourceRef,
       variance: seed.auto ? (awb.intakeVariance?.pieces ?? null) : null,
       raisedAt: daysAgo(raisedDaysAgo, 10, 22),
       raisedBy: seed.auto ? "system (variance \u2265 tolerance)" : "i.ali",
@@ -1832,7 +2040,11 @@ export const CLOSURES: ClosureState[] = AWBS.filter((a) => hasReached(a.stage, "
           : pod.complete
             ? `Captured ${formatDate(pod.capturedAt)} by ${pod.capturedBy}`
             : "POD captured but incomplete — missing evidence",
-        href: "/dispatch/pod",
+        // POD has no route of its own; it is the second tab of the gate-out
+        // screen, because a POD is only ever captured against a gate pass
+        // that has already been let out. Pointing this item at a standalone
+        // /dispatch/pod would 404 — the tab is the surface.
+        href: "/dispatch/gate-out",
       },
       {
         code: "charges",
@@ -2796,6 +3008,12 @@ export const CUSTOMS_CLEARANCES: CustomsClearance[] = CUSTOMS_AWBS.map((a, i) =>
         },
         source: keyedMismatch ? "keyed" : "psw-fetch",
         fetchedAt: keyedMismatch ? null : daysAgo(filedDaysAgo - 4, 11, 30),
+        // Null on both routes these fixtures exercise: the gateway fetch never
+        // touches a scanner, and the keyed-off-the-print case is the gateway
+        // being down with no imaging either. A timestamp here would badge the
+        // record as scanner-captured, which is a claim about provenance the
+        // fixture cannot make.
+        scannedAt: null,
         keyedAt: keyedMismatch ? oocKeyedAt : null,
         issuedAt: daysAgo(filedDaysAgo - 4, 11, 15),
         issuingOfficer: "Deputy Collector — Appraisement",

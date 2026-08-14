@@ -50,7 +50,15 @@ export const SCC_MAPPINGS: SccMapping[] = [
   { scc: "PIL", description: "Pharmaceuticals", proposedClassId: 13, strength: "strong", note: null },
   { scc: "COL", description: "Cool room +2 to +8 C", proposedClassId: 6, strength: "strong", note: null },
   { scc: "FRO", description: "Frozen", proposedClassId: 6, strength: "strong", note: null },
-  { scc: "ICE", description: "Dry ice", proposedClassId: 5, strength: "strong", note: "DGR — UN1845" },
+  // ICE is deliberately WEAK. Dry ice is the coolant a consignment travels in,
+  // not the commodity that was declared — a cold-chain pharma load is routinely
+  // manifested `ICE`. Held at "strong" it beat the goods description in
+  // proposeClassification and resolved the whole AWB to class 5, sending pharma
+  // to the DGR segregated store, which has no temperature regime and no Cold
+  // Chain Officer. Weak lets the description decide the storage class; the note
+  // stays so the UN1845 packaging requirement is still surfaced on screen, and
+  // proposeClassification carries it forward as `dgrPackagingRequired`.
+  { scc: "ICE", description: "Dry ice", proposedClassId: 5, strength: "weak", note: "DGR — UN1845" },
   { scc: "HEA", description: "Heavy cargo", proposedClassId: 2, strength: "strong", note: null },
   { scc: "BIG", description: "Outsized", proposedClassId: 2, strength: "strong", note: null },
 ];
@@ -63,6 +71,15 @@ export function sccMapping(scc: string): SccMapping | undefined {
  * Keywords in the goods description that should override a weak SCC.
  * Derived from the reference documents, where "PHARMA" / "PHARMACEUTICAL"
  * appears against SCC `GEN`.
+ *
+ * ORDER IS LOAD-BEARING — DO NOT REORDER.
+ * proposeClassification resolves with `.find()`, which returns the FIRST
+ * match, and pharma is listed above dangerous goods on purpose. A real
+ * description such as "PHARMA — flammable reagent, packed in dry ice" matches
+ * both rows; pharma first is what keeps it in the Pharma Store. Move the
+ * dangerous-goods row above it and every such consignment silently acquires a
+ * pharma → DGR route — the exact edge FC-03 forbids — with no test failing,
+ * because both rows are individually correct.
  */
 export const DESCRIPTION_OVERRIDES: Array<{ match: RegExp; classId: number; reason: string }> = [
   { match: /pharma|pregabalin|ranelate|medic|vaccine|reagent/i, classId: 13, reason: "Pharmaceutical goods description" },
@@ -72,12 +89,27 @@ export const DESCRIPTION_OVERRIDES: Array<{ match: RegExp; classId: number; reas
   { match: /aircraft|aog|hydraulic pump|spare/i, classId: 10, reason: "AOG spares description" },
 ];
 
+/** Cargo class 13, Pharmaceuticals — preferred zone PHR-STORE, +2 to +8 C. */
+const PHARMA_CLASS_ID = 13;
+/** Cargo class 5, Dangerous Goods — zone DGR-SEG, DGR-certified officer. */
+const DGR_CLASS_ID = 5;
+
 export interface ClassificationProposal {
   fromScc: SccMapping | undefined;
   fromDescription: { classId: number; reason: string } | null;
   /** Where the two disagree, the operator must resolve — FC-03/FC-02. */
   disagreement: boolean;
   proposedClassId: number | null;
+  /**
+   * The consignment is pharma AND arrived under a DGR-family SCC (dry ice,
+   * flammable reagent, corrosive). It is stored as pharma, but the IATA DGR
+   * packaging and documentation obligation still has to be met — carried here
+   * as a requirement rather than as the destination, because packaging is not
+   * a storage class. Read `fromScc.note` for the specific UN number.
+   */
+  dgrPackagingRequired: boolean;
+  /** The SCC note behind `dgrPackagingRequired` — e.g. "DGR — UN1845". */
+  dgrPackagingNote: string | null;
 }
 
 export function proposeClassification(scc: string, description: string): ClassificationProposal {
@@ -90,12 +122,40 @@ export function proposeClassification(scc: string, description: string): Classif
   const disagreement =
     !!byScc && !!fromDescription && byScc.proposedClassId !== fromDescription.classId && byScc.strength === "strong";
 
-  const proposedClassId =
+  // Ordinary resolution: weak SCC yields to the description, strong SCC wins.
+  const resolved =
     fromDescription && (!byScc || byScc.strength === "weak")
       ? fromDescription.classId
       : (byScc?.proposedClassId ?? fromDescription?.classId ?? null);
 
-  return { fromScc: byScc, fromDescription, disagreement, proposedClassId };
+  const pharmaDescription = fromDescription?.classId === PHARMA_CLASS_ID;
+  const sccIsDgrFamily = byScc?.proposedClassId === DGR_CLASS_ID;
+
+  // HARD RULE (FC-03): a pharmaceutical goods description NEVER resolves to
+  // class 5. Pharma and DGR are different zones with different authorities and
+  // different temperature regimes, so "which one wins" is not a tie to be
+  // broken by SCC strength — routing pharma into the segregated store is a
+  // cold-chain breach, while routing it to the Pharma Store and flagging the
+  // packaging obligation loses nothing. The check is written against the
+  // already-resolved class, not against the SCC, so any future resolution path
+  // that would land pharma on 5 is caught here too.
+  const proposedClassId = pharmaDescription && resolved === DGR_CLASS_ID ? PHARMA_CLASS_ID : resolved;
+
+  // The obligation survives both shapes of the collision: a strong DGR SCC
+  // overruled just above, and a weak DGR-family SCC (ICE) that had already
+  // yielded to the description.
+  const dgrPackagingRequired = pharmaDescription && sccIsDgrFamily;
+
+  return {
+    fromScc: byScc,
+    fromDescription,
+    disagreement,
+    proposedClassId,
+    dgrPackagingRequired,
+    dgrPackagingNote: dgrPackagingRequired
+      ? (byScc?.note ?? "IATA DGR packaging and documentation apply")
+      : null,
+  };
 }
 
 /* ================================================================== *

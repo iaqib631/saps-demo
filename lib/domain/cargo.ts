@@ -37,12 +37,31 @@ export type LifecycleStage =
   | "indexation" //        FC-01 §09     class/subclass set here
   | "tagging" //           FC-01 §10     barcode / RFID / AWB label
   | "segregation" //       FC-01 §11–12
+  /**
+   * FC-01 §13–14 — weigh / dimension / condition check.
+   *
+   * A discrepancy found here does NOT send the record back to §07–08
+   * reconciliation. It branches sideways to FC-04 by setting `BranchState`
+   * to `"cdr"` while the lifecycle stage stays where it is; §07–08 now
+   * covers manifest-vs-document findings only. Nothing here needs code —
+   * `hasReached` is deliberately monotonic and no caller moves a stage
+   * backwards — but the rule is easy to re-break by "fixing" a screen to
+   * reset the stage, so it is stated at the type.
+   */
   | "acceptance" //        FC-01 §13–14  weigh / dimension / condition
   | "stored" //            FC-01 §15–16  storage allocation + CMTS capture
   | "notified" //          FC-01 §17–18  IATA messaging + NOA
   | "customs" //           FC-01 §19     clearance tracking
   | "charged" //           FC-01 §20–21  charges + invoice
-  | "do-issued" //         FC-01 §22     delivery order
+  /**
+   * FC-01 §22a — the CHA requests the DO once the NOA has gone out. A
+   * requested DO carries no release authority; it only records who asked
+   * and against which NOA. §22b below is the terminal's issuance, and it
+   * is gated on payment plus the five release conditions — which is why
+   * the two are separate stages rather than one "delivery order" step.
+   */
+  | "do-requested" //      FC-01 §22a    CHA requests the DO (after §18 NOA)
+  | "do-issued" //         FC-01 §22b    terminal issues it — payment + release gate
   | "gate-pass" //         FC-01 §23
   | "dispatched" //        FC-01 §24
   | "delivered" //         FC-01 §25–26  POD + DLV
@@ -61,6 +80,7 @@ export const LIFECYCLE_ORDER: LifecycleStage[] = [
   "notified",
   "customs",
   "charged",
+  "do-requested",
   "do-issued",
   "gate-pass",
   "dispatched",
@@ -81,6 +101,7 @@ export const LIFECYCLE_LABEL: Record<LifecycleStage, string> = {
   notified: "Notified (NOA)",
   customs: "Customs",
   charged: "Charged",
+  "do-requested": "DO Requested",
   "do-issued": "DO Issued",
   "gate-pass": "Gate Pass",
   dispatched: "Dispatched",
@@ -102,7 +123,8 @@ export const LIFECYCLE_FC01_STEPS: Record<LifecycleStage, string> = {
   notified: "17–18",
   customs: "19",
   charged: "20–21",
-  "do-issued": "22",
+  "do-requested": "22a",
+  "do-issued": "22b",
   "gate-pass": "23",
   dispatched: "24",
   delivered: "25–26",
@@ -280,8 +302,29 @@ export interface AWB extends DomainRecord {
   } | null;
   /** Set true when 05e variance exceeded tolerance and a CDR was raised. */
   cdrRaised: boolean;
-  /** ISO — when the storage clock started (FC-07 §01/§03). */
+  /**
+   * ISO — FLIGHT arrival, and nothing else.
+   *
+   * This field used to double as the storage-clock origin, which quietly
+   * billed the gap between the aircraft landing and the cargo actually
+   * being taken into the shed — breakdown, ramp queue and off-hours
+   * handovers can put hours or days between the two events. Storage now
+   * starts at `intakeAt`; keep this one for the flight record, the arrival
+   * advice and the CMTS `ARRIVALDATE` column.
+   */
   arrivedAt: string;
+  /**
+   * ISO — recorded cargo INTAKE, FC-07 §01. The storage clock starts here.
+   *
+   * This is the origin of the whole charging chain and the field every
+   * demurrage figure hangs off:
+   *   §01 intake recorded (this field)
+   *   §02 storage clock starts at `intakeAt`
+   *   §03 free / grace period runs from `intakeAt` — nothing is charged
+   *   §03a chargeable period = dwell − free period
+   * Dwell is therefore measured from `intakeAt`, never from `arrivedAt`.
+   */
+  intakeAt: string;
 }
 
 /** Convenience view over the four-line party blocks. */

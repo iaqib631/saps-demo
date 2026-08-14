@@ -280,7 +280,19 @@ export interface SubClassLocationRule {
 export const SUBCLASS_LOCATION_RULES: SubClassLocationRule[] = (() => {
   const rules: SubClassLocationRule[] = [];
   let id = 1;
-  /** FC-03 doesn't draw overflow targets, so these are proposals for sign-off. */
+  /**
+   * FC-03 doesn't draw overflow targets, so these are proposals for sign-off.
+   *
+   * ONE ENTRY IS NOT A PROPOSAL — it is the guarantee that makes FC-03 true:
+   * pharma (13) overflows ONLY to cold chain (6), and cold chain overflows
+   * back to pharma. Class 5 (Dangerous Goods, DGR-SEG) is never a pharma
+   * target and must never become one. `allocationCandidates` reads nothing
+   * but this map and the preferred zone, so adding `13: 5` here — or any
+   * chain that reaches 5 from 13 — is all it would take to route a pharma
+   * consignment into the segregated store, which is unrefrigerated and under
+   * a DGR officer rather than the Cold Chain Officer. The classifier enforces
+   * the same rule at the other end (proposeClassification in storage.ts).
+   */
   const OVERFLOW: Record<number, number> = { 1: 2, 2: 1, 3: 1, 4: 1, 13: 6, 6: 13, 12: 7 };
   for (const s of SITES) {
     for (const sub of CARGO_SUBCLASSES) {
