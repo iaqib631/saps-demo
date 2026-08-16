@@ -7,6 +7,7 @@
  *   `GODOWNRENTDUPLICATE` (10)
  *   `grCharges` (48)         calculation scratch
  *   `AWBDELEIVERYORDER` (39) delivery order
+ *   `CHARGECALCULATER` (3)   calculator screen header
  *   `CARGOSUBCLASSCHARGES` (15), `LOCATIONCHARGES` (10), `TaxType` (12)
  */
 
@@ -30,6 +31,24 @@ export interface SlabLine {
 
 export interface ChargeCalculation {
   awbId: number;
+  /**
+   * CMTS `CHARGECALCULATER.VOUCHERNO` — varchar(50), nullable in the source.
+   *
+   * The godown-rent voucher this calculation was written onto. It is the SAME
+   * number as `GodownRent.VOUCHERNO` and the same series, not a second
+   * identifier for the calculation: CMTS models the calculator as a header
+   * pointing back at the voucher it priced, so a value here means "this
+   * arithmetic is the working behind that document".
+   *
+   * Null is a real state, not missing data. The calculator runs in two modes
+   * and only one of them has a voucher — a live quote priced against today's
+   * tariff has not been committed to anything, so it legitimately reads null,
+   * while a calculation recalled from a raised voucher carries that voucher's
+   * number. Defaulting this to "" or synthesising a number would make an
+   * uncommitted quote indistinguishable from a billed voucher on screen,
+   * which is precisely what the source column being nullable guards against.
+   */
+  VOUCHERNO: string | null;
   /** Which tariff version produced this — provenance is a P5-1 requirement. */
   tariffVersion: string;
   calculatedAt: string;
@@ -158,6 +177,14 @@ export function calculateCharges(input: {
   tariffVersion?: string;
   calculatedAt?: string;
   taxPercent?: number;
+  /**
+   * CMTS `CHARGECALCULATER.VOUCHERNO`. Optional on the way IN and required on
+   * the way out, which is deliberate: a live quote has no voucher to name yet,
+   * so callers pricing one simply omit it and the result records null rather
+   * than the caller having to remember to pass a null through. Callers
+   * recalling the working behind an already-raised voucher pass its number.
+   */
+  voucherNo?: string | null;
 }): ChargeCalculation {
   const cls = cargoClass(input.cargoClassId);
   const sub = cargoSubClass(input.cargoSubClassId);
@@ -213,6 +240,7 @@ export function calculateCharges(input: {
 
   return {
     awbId: input.awbId,
+    VOUCHERNO: input.voucherNo ?? null,
     tariffVersion: input.tariffVersion ?? "TARIFF-2026.2",
     calculatedAt: input.calculatedAt ?? input.asOf,
     arrivalAt: input.arrivalAt,

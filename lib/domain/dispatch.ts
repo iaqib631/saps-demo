@@ -23,7 +23,40 @@ export interface GatePass extends DomainRecord {
   docNumber: DocNumberRef;
   GATEPASSDATE: string;
 
-  // Cross-references — CMTS pairs each document with its date
+  /*
+   * Cross-references — the documents CMTS stamps on a gate pass.
+   *
+   * These are NUMBER + DATE PAIRS, not fourteen independent fields. Each
+   * `*Date` is the date that document was issued, and it is meaningless
+   * without the number beside it — "12 Mar 2026" says nothing; "IGM 4417,
+   * 12 Mar 2026" identifies a filing a customs officer can pull. Render
+   * each pair as one labelled unit ("IGM No. / Date"), never as two
+   * neighbouring fields that happen to sort next to each other:
+   *
+   *   IGMNO   + IGMNODate     import general manifest
+   *   AWBNO   + AWBNODate     master air waybill
+   *   HWBNO   + HWBNODate     house air waybill (consolidations only)
+   *   DONo    + DoDate        delivery order
+   *   GRNo    + GRDate        goods receipt
+   *   CASHNO  + CASHNODate    cash receipt, when charges were paid in cash
+   *   BDNo    + BDDate        bank draft reference, when they were not
+   *
+   * Nullability follows the pairing: where the number is optional the date
+   * is optional with it, and the two are null together or set together. A
+   * date present against a null number is a data fault, not a partial
+   * record — a screen that shows one should show neither.
+   *
+   * CASHNO and BDNo are the two settlement routes and are mutually
+   * exclusive in practice, which is why both pairs are nullable rather
+   * than one being required.
+   *
+   * Casing here is CMTS's own and is deliberately inconsistent — `IGMNO`
+   * shouts, `DoDate` does not. It is migration parity; do not regularise
+   * it, and do not add an all-caps twin of a column that already exists in
+   * mixed case (`BDNO` beside `BDNo`) — TypeScript would treat them as two
+   * distinct required fields for one legacy column, and whichever one a
+   * screen failed to read would go silently blank.
+   */
   IGMNO: string;
   IGMNODate: string;
   AWBNO: string;
@@ -38,6 +71,7 @@ export interface GatePass extends DomainRecord {
   BDDate: string | null;
   CASHNO: string | null;
   CASHNODate: string | null;
+  /** Unpaired — CMTS carries no `ChallanNoDate`. Render it on its own. */
   ChallanNo: string | null;
 
   ARRIVALDATE: string;
@@ -60,6 +94,13 @@ export interface GatePass extends DomainRecord {
   DeliveryDate: string | null;
   NAMEOFCUSTODIANSHED: string;
 
+  /**
+   * The gate pass's sequence number within the shift — the number the gate
+   * clerk reads aloud and writes in the register. Human-facing, and not a
+   * surrogate key: it is not unique on its own (it restarts, which is why
+   * `SerialNoWithYear` exists to qualify it) and nothing joins on it.
+   * `GATEPASSNO` is the identity. Keep it rendered.
+   */
   SerialNo: number;
   SerialNoWithYear: string;
   DetendIdentification: string | null;

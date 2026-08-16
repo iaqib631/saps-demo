@@ -45,6 +45,9 @@ import {
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import ExportCrossStageStrip from "@/components/export/ExportCrossStageStrip";
+import AcceptanceCaptureCards, {
+  AcceptanceOtherColumns,
+} from "@/components/export/acceptance/AcceptanceCaptureCards";
 import { AuditStrip, FormField, FormCompletenessGate } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
@@ -365,37 +368,30 @@ export default function ExportAcceptancePage() {
 
               {tab === "acceptance" && (
                 <>
-                  <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
-                      <ClipboardCheck size={15} className="text-[#64748B]" />
-                      <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                        CARGOACCEPTANCE — all 31 columns
-                      </h3>
-                    </div>
-                    <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-4">
-                      {(Object.entries(c.acceptance) as Array<[string, unknown]>).map(([k, v]) => (
-                        <div key={k} className="flex flex-col gap-1">
-                          <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-                          <span
-                            className="text-[12px] font-medium break-words"
-                            style={{ color: v === null || v === "" ? "#CBD5E1" : "#0F172A" }}
-                          >
-                            {v === null || v === "" ? "null" : String(v)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  {/*
+                   * The operator capture set — identity, the clock and scale,
+                   * the parties. These lead the tab because they are the order
+                   * the counter works in; the residual CARGOACCEPTANCE columns
+                   * close it, since a status flag is something the clerk reads
+                   * back rather than something she keys.
+                   */}
+                  <AcceptanceCaptureCards
+                    acceptance={c.acceptance}
+                    scaleNetKg={c.weighment?.netKg ?? null}
+                  />
 
                   <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-                    <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
-                      <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                        Export documents — keyed at the counter
-                      </h3>
-                      <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                        The shipper hands paper across the counter and the clerk types it. No
-                        scanner in this loop — OCR is inbound MAWB/HAWB and receiver docs only.
-                      </p>
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-start gap-2">
+                      <ClipboardCheck size={15} className="text-[#64748B] mt-0.5 flex-shrink-0" />
+                      <div>
+                        <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                          Export documents — keyed at the counter
+                        </h3>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                          The shipper hands paper across the counter and the clerk types it. No
+                          scanner in this loop — OCR is inbound MAWB/HAWB and receiver docs only.
+                        </p>
+                      </div>
                     </div>
                     <div className="p-5 flex flex-col gap-4">
                       <FormCompletenessGate
@@ -549,6 +545,8 @@ export default function ExportAcceptancePage() {
                       </p>
                     </div>
                   </div>
+
+                  <AcceptanceOtherColumns acceptance={c.acceptance} />
                 </>
               )}
 

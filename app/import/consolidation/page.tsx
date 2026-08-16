@@ -26,6 +26,8 @@ import {
   listAwbs,
   round2,
   storageLocation,
+  type AWBConsolDetail,
+  type HouseAWB,
 } from "@/lib/domain";
 
 /**
@@ -46,6 +48,37 @@ const CMTS_SOURCE_TABLES = [
   { table: "AWBTRANSFER", meaning: "A house transferred out keeps its consolidation lineage" },
   { table: "AWBARRIVALADVICE", meaning: "Arrival advice is raised per house, not per master" },
 ];
+
+/**
+ * The `AWBConsolDetail` line beneath a house, derived from the house itself.
+ *
+ * Two things about this are deliberate and easy to "fix" wrongly.
+ *
+ * First, `GROSSWEIGHT` reads the house's own `WEIGHT`. The column exists on
+ * the detail table precisely so the gross figure survives next to
+ * `CHARGEDWEIGH` — volumetric uplift means the chargeable weight is routinely
+ * the larger of the two, and once the master is broken down it is the gross
+ * that has to be reconcilable against what came off the aircraft. Deriving a
+ * second, *different* gross here would fabricate a house-level discrepancy
+ * that no other fixture records and that no operator could resolve.
+ *
+ * Second, `UNIQUEINDENTIFICATION` carries the same correlator value as
+ * `AWBCONSOLE.UniqueIdentification` under a different spelling. That is the
+ * whole parity point: CMTS writes the extra N on this table and not on the
+ * others, so the value travels and the column name does not. Screens that
+ * quietly reuse one spelling for both tables are how a migration mapping goes
+ * missing without anything looking wrong.
+ *
+ * Only these two columns of the thirteen are modelled — including whatever
+ * column links the line back to its parent house — so the pairing below is
+ * positional, and the card says so rather than implying a key it does not have.
+ */
+function consolDetailOf(h: HouseAWB): AWBConsolDetail {
+  return {
+    GROSSWEIGHT: h.WEIGHT,
+    UNIQUEINDENTIFICATION: h.UniqueIdentification,
+  };
+}
 
 export default function ConsolidationPage() {
   const { scope } = useSite();
@@ -370,6 +403,99 @@ export default function ConsolidationPage() {
               </div>
             );
           })}
+        </div>
+      </div>
+
+      {/* Detail lines — AWBConsolDetail, the table named in the source list
+          above that had nothing rendered behind it. Kept as its own card
+          rather than folded into the house grid because it is a different
+          table: the gross weight and the correlator below are written per
+          detail line, not on the AWBCONSOLE row they sit under. */}
+      <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
+          <h3 className="text-[14px] font-semibold text-[#0F172A]">
+            Detail lines ({houses.length})
+          </h3>
+          <p className="text-[11px] text-[#94A3B8] mt-0.5">
+            CMTS AWBConsolDetail — the gross weight the house was received at, against the
+            chargeable weight it will be billed on, plus the consignment correlator under this
+            table&rsquo;s own spelling.
+          </p>
+        </div>
+        {houses.length === 0 ? (
+          <p className="px-5 py-4 text-[13px] text-[#64748B]">
+            No houses under this master, so no detail lines.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                  <th className="text-left px-4 py-2.5">
+                    House <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">AWBCONSOLE.HWB</span>
+                  </th>
+                  <th className="text-right px-4 py-2.5">
+                    Gross weight{" "}
+                    <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">GROSSWEIGHT</span>
+                  </th>
+                  <th className="text-right px-4 py-2.5">
+                    Chargeable{" "}
+                    <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">
+                      AWBCONSOLE.CHARGEDWEIGH
+                    </span>
+                  </th>
+                  <th className="text-left px-4 py-2.5">
+                    Correlator{" "}
+                    <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">
+                      UNIQUEINDENTIFICATION
+                    </span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {houses.map((h) => {
+                  const d = consolDetailOf(h);
+                  // Volumetric uplift: the chargeable weight above the gross is
+                  // the norm, not an error, so it is toned as information.
+                  const uplift = round2(h.CHARGEDWEIGH - (d.GROSSWEIGHT ?? h.CHARGEDWEIGH));
+                  return (
+                    <tr key={h.ConsolId} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                      <td className="px-4 py-2.5 font-mono font-semibold">{h.HWB}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">
+                        {d.GROSSWEIGHT === null ? (
+                          <span className="text-[#CBD5E1]">—</span>
+                        ) : (
+                          formatKg(d.GROSSWEIGHT)
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono">
+                        {formatKg(h.CHARGEDWEIGH)}
+                        {uplift > 0 && (
+                          <span className="ml-1.5 text-[11px] text-[#94A3B8]">
+                            +{formatKg(uplift)} vol
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-[12px] text-[#64748B]">
+                        {d.UNIQUEINDENTIFICATION ?? <span className="text-[#CBD5E1]">—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+          <p className="text-[11px] text-[#64748B]">
+            Two of AWBConsolDetail&rsquo;s thirteen columns are modelled — the eleven whose names
+            have not been read off the schema restore are absent rather than guessed, and that
+            includes the column carrying the link back to the parent house. Each line is therefore
+            shown against the house it was built from, not against a key.{" "}
+            <span className="font-mono">UNIQUEINDENTIFICATION</span> spells the correlator with the
+            extra N because this table does; <span className="font-mono">UniqueIdentification</span>{" "}
+            on the house above is a different column carrying the same value.
+          </p>
         </div>
       </div>
 

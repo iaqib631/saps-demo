@@ -34,12 +34,28 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, CalendarClock, Copy, FileText, Receipt, Wallet } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  CalendarClock,
+  Check,
+  Copy,
+  FileText,
+  Link2,
+  Receipt,
+  Wallet,
+} from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
 import AwbRentLedgerView from "@/components/billing/godown-rent/AwbRentLedgerView";
+import VoucherChargeBreakdown from "@/components/billing/godown-rent/VoucherChargeBreakdown";
 import { deriveLedger, rateLabel } from "@/components/billing/godown-rent/rentLedger";
+import {
+  buildTimeline,
+  formatExact,
+  reconcileVoucher,
+} from "@/components/billing/godown-rent/voucherReconciliation";
 import { AuditStrip, DocNumber } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
@@ -51,7 +67,6 @@ import {
   formatPkr,
   grDetailsFor,
   listGodownRents,
-  storageLocation,
 } from "@/lib/domain";
 
 const BILL_TONE: Record<string, { bg: string; fg: string }> = {
@@ -60,6 +75,47 @@ const BILL_TONE: Record<string, { bg: string; fg: string }> = {
   DUPLICATE: { bg: "#F5F3FF", fg: "#7C3AED" },
   FREEHAND: { bg: "#DBEAFE", fg: "#1B4F8B" },
 };
+
+/**
+ * One voucher field, carrying the CMTS column it maps to so migration parity is
+ * checkable on sight — the same contract as the shared `Field` component, kept
+ * local because this screen labels a fair number of its values with derived text
+ * ("PKR 4,968", "true") rather than raw record values.
+ *
+ * A null renders as the word `null` in the muted tone rather than as blank: on a
+ * parity screen "this column exists and is empty" and "this column was never
+ * mapped" are different findings, and an empty cell cannot tell them apart.
+ */
+function VoucherField({
+  label,
+  cmts,
+  value,
+  mono,
+}: {
+  label: string;
+  cmts: string;
+  value: string | null;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline gap-1.5 flex-wrap">
+        <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">
+          {label}
+        </span>
+        <span className="text-[9px] font-mono text-[#CBD5E1]" title={`CMTS column: ${cmts}`}>
+          {cmts}
+        </span>
+      </div>
+      <span
+        className={`text-[13px] font-medium break-words ${mono ? "font-mono" : ""}`}
+        style={{ color: value ? "#0F172A" : "#CBD5E1" }}
+      >
+        {value ?? "null"}
+      </span>
+    </div>
+  );
+}
 
 /**
  * Legacy CMTS `godown-rent-history` broke a voucher down by TIME-BASED RATE
@@ -115,6 +171,29 @@ export default function GodownRentPage() {
         : [],
     [ledger, g],
   );
+  /**
+   * The document-date sequence. Built even when a date is null — a missing
+   * DELIVERYDATE is a state worth showing ("still in the shed"), not a row to
+   * drop, and dropping it would also let a later event silently take its place
+   * in the ordering check.
+   */
+  const timeline = useMemo(
+    () => (g ? buildTimeline(g) : { events: [], ordered: true }),
+    [g],
+  );
+
+  /**
+   * Computed here rather than inside the breakdown tab so the header can warn
+   * too. The headline NETPAYABLE is the figure a reader takes away from this
+   * screen, and it is reprinted from the record without being checked against
+   * the arithmetic that is supposed to produce it — so when the two disagree,
+   * the warning has to sit next to the number, not behind a tab.
+   */
+  const recon = useMemo(
+    () => (g ? reconcileVoucher(g, lines, awb?.AWBId ?? null) : null),
+    [g, lines, awb],
+  );
+
   const periodTotals = useMemo(
     () =>
       voucherPeriods.reduce(
@@ -311,38 +390,108 @@ export default function GodownRentPage() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
-                      Net payable
-                    </p>
+                    <div className="flex items-baseline gap-1.5 justify-end">
+                      <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                        Net payable
+                      </p>
+                      <span className="text-[9px] font-mono text-[#CBD5E1]" title="CMTS column: NETPAYABLE">
+                        NETPAYABLE
+                      </span>
+                    </div>
                     <p className="text-[22px] font-bold text-[#0B2545] font-mono">
                       {formatPkr(g.NETPAYABLE)}
                     </p>
+                    {/*
+                      The stored figure and the figure its own columns produce,
+                      shown together whenever they differ. Printing only the
+                      stored one would make an unapplied waiver invisible at
+                      exactly the point a reader takes the number away.
+                    */}
+                    {recon && !recon.netPayableAgrees && (
+                      <div className="mt-1 flex flex-col items-end gap-0.5">
+                        <span className="h-[18px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[10px] font-bold inline-flex items-center gap-1">
+                          <AlertTriangle size={10} strokeWidth={2.5} />
+                          Does not match its own columns
+                        </span>
+                        <span className="text-[11px] text-[#64748B]">
+                          TOTALAMOUNT − WAIVEOFFAMOUNT ={" "}
+                          <span className="font-mono font-semibold text-[#0F172A]">
+                            {formatExact(recon.netPayableDerived)}
+                          </span>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-4 pt-4 border-t border-[#F1F5F9]">
                   {(
                     [
-                      ["CHALLANNO", g.CHALLANNO],
-                      ["TOTALWEIGHT", formatKg(g.TOTALWEIGHT)],
-                      ["CHARGEABLEWEIGHT", formatKg(g.CHARGEABLEWEIGHT)],
-                      ["DAYS", String(g.DAYS)],
-                      ["SUPPLIMENTDAYS", String(g.SUPPLIMENTDAYS)],
-                      ["TOTALPIECES", String(g.TOTALPIECES)],
-                      ["NTN", g.NTN],
-                      ["STN", g.STN],
+                      ["Challan", "CHALLANNO", g.CHALLANNO, true],
+                      ["Actual weight", "TOTALWEIGHT", formatKg(g.TOTALWEIGHT), true],
+                      ["Chargeable weight", "CHARGEABLEWEIGHT", formatKg(g.CHARGEABLEWEIGHT), true],
+                      ["Days", "DAYS", String(g.DAYS), true],
+                      ["Supplement days", "SUPPLIMENTDAYS", String(g.SUPPLIMENTDAYS), true],
+                      ["Pieces", "TOTALPIECES", String(g.TOTALPIECES), true],
+                      ["Consignee NTN", "NTN", g.NTN, true],
+                      ["Consignee STN", "STN", g.STN, true],
                     ] as const
-                  ).map(([k, v]) => (
-                    <div key={k} className="flex flex-col gap-1">
-                      <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-                      <span
-                        className="text-[13px] font-medium break-words"
-                        style={{ color: v ? "#0F172A" : "#CBD5E1" }}
-                      >
-                        {v ?? "null"}
-                      </span>
-                    </div>
+                  ).map(([label, cmts, value, mono]) => (
+                    <VoucherField key={cmts} label={label} cmts={cmts} value={value} mono={mono} />
                   ))}
+                </div>
+              </div>
+
+              {/*
+                What the voucher points at. These are cross-references rather
+                than values — every one of them is a handle onto another CMTS
+                document — so they earn a card instead of six more cells in the
+                header grid, where a reader would take them for attributes of
+                the voucher itself.
+              */}
+              <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+                  <Link2 size={15} className="text-[#64748B]" />
+                  <div>
+                    <h3 className="text-[14px] font-semibold text-[#0F172A]">References</h3>
+                    <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                      The documents this voucher is raised against, and the number its detail lines
+                      carry back to it.
+                    </p>
+                  </div>
+                </div>
+                <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-4">
+                  <VoucherField
+                    label="Delivery order"
+                    cmts="DONO"
+                    value={g.DONO}
+                    mono
+                  />
+                  <VoucherField
+                    label="Clearing agent"
+                    cmts="CLEARINGAGENT"
+                    value={g.clearingAgent}
+                  />
+                  <VoucherField label="Sub AWB" cmts="SUBAWBNO" value={g.SUBAWBNO} mono />
+                  <VoucherField label="GR reference" cmts="GRREFERENCE" value={g.GRREFERENCE} mono />
+                  <VoucherField label="Godown number" cmts="GDNUM" value={g.GDNum} mono />
+                  {/*
+                    GRNO is the GODOWNRENTDETAIL side of the same relation: every
+                    detail line stamps the voucher it belongs to, and that stamp
+                    IS the join — CMTS gives the grid no other link back. Read
+                    off the lines rather than echoing VOUCHERNO so a line that
+                    ever carried a different number would show up here.
+                  */}
+                  <VoucherField
+                    label="Stamped on detail lines"
+                    cmts="GODOWNRENTDETAIL.GRNO"
+                    value={
+                      lines.length === 0
+                        ? null
+                        : Array.from(new Set(lines.map((d) => d.GRNO))).join(", ")
+                    }
+                    mono
+                  />
                 </div>
               </div>
 
@@ -350,7 +499,7 @@ export default function GodownRentPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 {(
                   [
-                    ["lines", `Detail lines (${lines.length})`],
+                    ["lines", `Charge breakdown (${lines.length})`],
                     ["payment", "Payment block"],
                     ["duplicates", `Duplicates (${dups.length})`],
                   ] as const
@@ -370,89 +519,7 @@ export default function GodownRentPage() {
                 ))}
               </div>
 
-              {tab === "lines" && (
-                <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-                  <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
-                    <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                      GODOWNRENTDETAIL — what the sum* columns are the sum of
-                    </h3>
-                    <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                      One line per class / subclass / location the consignment occupied.
-                    </p>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[860px]">
-                      <thead>
-                        <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                          {["Zone", "Class / Subclass", "Days", "Weight", "Handling", "Storage", "Location", "Ex-tax", "Tax", "Total"].map((h) => (
-                            <th
-                              key={h}
-                              className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap"
-                            >
-                              {h}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lines.map((d) => (
-                          <tr key={d.Id} className="border-b border-[#F1F5F9] last:border-0">
-                            <td className="px-3 py-2.5 text-[12px] text-[#0F172A] font-medium whitespace-nowrap">
-                              {storageLocation(d.LOCATIONID)?.ABBREVATION ?? d.LOCATIONID}
-                            </td>
-                            <td className="px-3 py-2.5 text-[12px] text-[#475569] whitespace-nowrap">
-                              {cargoClass(d.CLASSID).ABBREVATION}
-                              <span className="text-[#94A3B8]">
-                                {" "}
-                                / #{d.SUBCLASSID}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569]">{d.DAYS}</td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatKg(d.WEIGHT)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.HandlingCharges)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.StorgeUnitCharges)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.LocationCharges)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.TotalAmountWithoutTax)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.Tax)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[13px] font-semibold text-[#0F172A] whitespace-nowrap">
-                              {formatPkr(d.TotalAmountWithTax)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0] grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-2">
-                    {(
-                      [
-                        ["sumHandlingCharges", g.sumHandlingCharges],
-                        ["sumStorgeUnitCharges", g.sumStorgeUnitCharges],
-                        ["sumLocationChargesAmount", g.sumLocationChargesAmount],
-                        ["sumTax", g.sumTax],
-                      ] as const
-                    ).map(([k, v]) => (
-                      <div key={k}>
-                        <p className="text-[9px] font-mono text-[#CBD5E1]">{k}</p>
-                        <p className="font-mono text-[12px] font-semibold text-[#0F172A]">
-                          {formatPkr(v)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {tab === "lines" && recon && <VoucherChargeBreakdown recon={recon} />}
 
               {tab === "payment" && (
                 <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
@@ -468,32 +535,51 @@ export default function GodownRentPage() {
                   <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-4">
                     {(
                       [
-                        ["PAID", g.PAID ? "true" : "false"],
-                        ["Paymode", g.Paymode],
-                        ["PAYDATE", g.PAYDATE ? formatDate(g.PAYDATE) : null],
-                        ["CASHAMOUNT", g.CASH ? formatPkr(g.CASHAMOUNT) : null],
-                        ["PAYORDERNO", g.PAYORDERNO],
-                        ["PAYORDERAMOUNT", g.PayOrder ? formatPkr(g.PAYORDERAMOUNT) : null],
-                        ["CHEQUENO", g.CHEQUENO ? String(g.CHEQUENO) : null],
-                        ["CHEQUEDATE", g.CHEQUEDATE ? formatDate(g.CHEQUEDATE) : null],
-                        ["BANKNAME", g.BANKNAME],
-                        ["BANKBRANCHNAME", g.BANKBRANCHNAME],
-                        ["ACCTITLE", g.ACCTITLE],
-                        ["ACCNO", g.ACCNO],
-                        ["CREDITCARD", g.CREDITCARD],
-                        ["RECIEVEDBY", g.RECIEVEDBY],
-                        ["OverPaidAmount", g.OverPaidAmount ? formatPkr(g.OverPaidAmount) : null],
+                        ["Paid", "PAID", g.PAID ? "true" : "false", false],
+                        ["Pay mode", "Paymode", g.Paymode, false],
+                        ["Paid on", "PAYDATE", g.PAYDATE ? formatDate(g.PAYDATE) : null, false],
+                        ["Cash", "CASHAMOUNT", g.CASH ? formatPkr(g.CASHAMOUNT) : null, true],
+                        ["Pay order", "PAYORDERNO", g.PAYORDERNO, true],
+                        [
+                          "Pay order amount",
+                          "PAYORDERAMOUNT",
+                          g.PayOrder ? formatPkr(g.PAYORDERAMOUNT) : null,
+                          true,
+                        ],
+                        ["Cheque", "CHEQUENO", g.CHEQUENO ? String(g.CHEQUENO) : null, true],
+                        [
+                          "Cheque date",
+                          "CHEQUEDATE",
+                          g.CHEQUEDATE ? formatDate(g.CHEQUEDATE) : null,
+                          false,
+                        ],
+                        ["Bank", "BANKNAME", g.BANKNAME, false],
+                        ["Branch", "BANKBRANCHNAME", g.BANKBRANCHNAME, false],
+                        ["Account title", "ACCTITLE", g.ACCTITLE, false],
+                        ["Account number", "ACCNO", g.ACCNO, true],
+                        // MASTERCARD sits beside CREDITCARD rather than in the
+                        // References card the ticket grouped it under: both are
+                        // card instruments this voucher was settled with, and
+                        // splitting a pair of columns across two cards is how a
+                        // reader ends up believing they are unrelated fields.
+                        ["Credit card", "CREDITCARD", g.CREDITCARD, true],
+                        ["Master card", "MASTERCARD", g.MASTERCARD, true],
+                        ["Received by", "RECIEVEDBY", g.RECIEVEDBY, false],
+                        [
+                          "Overpaid",
+                          "OverPaidAmount",
+                          g.OverPaidAmount ? formatPkr(g.OverPaidAmount) : null,
+                          true,
+                        ],
                       ] as const
-                    ).map(([k, v]) => (
-                      <div key={k} className="flex flex-col gap-1">
-                        <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-                        <span
-                          className="text-[13px] font-medium break-words"
-                          style={{ color: v ? "#0F172A" : "#CBD5E1" }}
-                        >
-                          {v ?? "null"}
-                        </span>
-                      </div>
+                    ).map(([label, cmts, value, mono]) => (
+                      <VoucherField
+                        key={cmts}
+                        label={label}
+                        cmts={cmts}
+                        value={value}
+                        mono={mono}
+                      />
                     ))}
                   </div>
                   <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
@@ -552,6 +638,94 @@ export default function GodownRentPage() {
                   </div>
                 </div>
               )}
+
+              {/*
+                The voucher's document dates, in the order the events happen.
+
+                Rendered as a sequence rather than as four date cells because
+                the ordering is the check: a pay order dated before the voucher
+                it settles, or a delivery before the GRV was raised, is a real
+                defect and invisible in a grid. FROMDATE/TODATE are shown with
+                the header above instead of here — they bound the period being
+                billed rather than marking an event, and TODATE sits at the
+                billing cut-off, so folding them in would report a voucher
+                raised mid-period as running backwards, which is exactly what
+                CMTS does when rent is billed forward in instalments.
+              */}
+              <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <CalendarClock size={15} className="text-[#64748B]" />
+                    <div>
+                      <h3 className="text-[14px] font-semibold text-[#0F172A]">Document dates</h3>
+                      <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                        Arrival through settlement — the sequence a gate officer reads top to
+                        bottom.
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className="h-[18px] px-1.5 rounded text-[10px] font-bold inline-flex items-center gap-1 whitespace-nowrap"
+                    style={
+                      timeline.ordered
+                        ? { backgroundColor: "#DCFCE7", color: "#16A34A" }
+                        : { backgroundColor: "#FEE2E2", color: "#DC2626" }
+                    }
+                  >
+                    {timeline.ordered ? (
+                      <>
+                        <Check size={10} strokeWidth={3} /> Runs forward
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle size={10} strokeWidth={2.5} /> Out of sequence
+                      </>
+                    )}
+                  </span>
+                </div>
+                <div className="p-5 flex flex-col gap-3">
+                  {timeline.events.map((e) => (
+                    <div
+                      key={e.cmts}
+                      className="flex items-start justify-between gap-4 flex-wrap"
+                      style={
+                        e.outOfOrder
+                          ? {
+                              backgroundColor: "#FEF2F2",
+                              borderRadius: 8,
+                              padding: "6px 8px",
+                              margin: "-6px -8px",
+                            }
+                          : undefined
+                      }
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <span className="text-[12px] font-semibold text-[#0F172A]">{e.label}</span>
+                          <span
+                            className="text-[9px] font-mono text-[#CBD5E1]"
+                            title={`CMTS column: ${e.cmts}`}
+                          >
+                            {e.cmts}
+                          </span>
+                          {e.outOfOrder && (
+                            <span className="h-[16px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[9px] font-bold inline-flex items-center">
+                              BEFORE THE STEP ABOVE
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">{e.why}</p>
+                      </div>
+                      <span
+                        className="font-mono text-[12px] font-medium whitespace-nowrap"
+                        style={{ color: e.iso ? "#0F172A" : "#CBD5E1" }}
+                      >
+                        {e.iso ? formatDate(e.iso) : "null"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
               {/* Rent periods — legacy CMTS time-based rate-tier breakdown */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">

@@ -26,6 +26,7 @@ import {
   VARIANCE_TOLERANCE,
   cargoSubClass,
   formatKg,
+  formatPkr,
   listAwbs,
   round2,
   subClassesOf,
@@ -95,6 +96,10 @@ export default function OcrIntakePage() {
   const [classId, setClassId] = useState<number>(awb?.CARGOCLASSID ?? 1);
   const [subClassId, setSubClassId] = useState<number>(awb?.cargoSubClassId ?? 101);
   const [committed, setCommitted] = useState(false);
+
+  // The subclass the 05f commit step is currently pointed at. Resolved once so
+  // the classification label and its MINCHARGES floor cannot drift apart.
+  const subClass = cargoSubClass(subClassId);
 
   // 05b — the extraction. Seeded from the AWB so the numbers are consistent
   // with the rest of the fixture set rather than invented per render.
@@ -670,6 +675,41 @@ export default function OcrIntakePage() {
             </div>
           </div>
 
+          {/* What the subclass chosen above costs the consignment.
+           *
+           * MINCHARGES belongs on this step and not on the master screen alone
+           * because the pick made here is the first moment the floor is set:
+           * a GCR-L line and an AFU-H line differ by thousands of rupees before
+           * a single day of storage accrues, and the operator committing the
+           * summary is the last person who can still change it.
+           *
+           * It is a floor, not a line item — FC-07 bills the greater of the
+           * computed storage total and this — which is why zero is spelled out
+           * rather than shown as a bare "0". A zero subclass (HUM, DIP, the
+           * customs-held ones) means no minimum applies, not free storage, and
+           * that misreading is exactly the one that survives to invoicing. */}
+          <div className="mt-4 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3 flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">
+                  Minimum charge
+                </span>
+                <span className="font-mono text-[9px] text-[#CBD5E1]">CARGOSUBCLASS.MINCHARGES</span>
+              </div>
+              <p className="text-[11px] text-[#94A3B8] mt-1 max-w-[62ch]">
+                {subClass.MINCHARGES === 0
+                  ? `${subClass.ABBREVATION} carries no floor — storage bills at the computed total. Zero means no minimum applies, not free.`
+                  : "FC-07 bills the computed storage total or this, whichever is greater. Changing the subclass above changes the floor."}
+              </p>
+            </div>
+            <span
+              className="text-[18px] font-bold font-mono whitespace-nowrap"
+              style={{ color: subClass.MINCHARGES === 0 ? "#94A3B8" : "#0F172A" }}
+            >
+              {formatPkr(subClass.MINCHARGES)}
+            </span>
+          </div>
+
           <div className="mt-5 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-5">
             <p className="text-[12px] font-semibold text-[#64748B] uppercase tracking-wider mb-3">
               Summary to commit
@@ -679,7 +719,7 @@ export default function OcrIntakePage() {
                 ["Lines", String(lines.length)],
                 ["Pieces (received)", String(totals.pieces.physical)],
                 ["Weight (received)", formatKg(totals.weightKg.physical)],
-                ["Classification", cargoSubClass(subClassId).ABBREVATION],
+                ["Classification", subClass.ABBREVATION],
                 ["IGM linkage", awb.IGMNO],
                 ["Variance", overTolerance ? "Over tolerance" : "Within tolerance"],
               ].map(([l, v]) => (

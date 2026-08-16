@@ -19,7 +19,9 @@ import {
   BadgeCheck,
   Camera,
   CheckCircle2,
+  ClipboardList,
   Database,
+  Layers,
   PackageCheck,
   Plane,
   ScanLine,
@@ -32,17 +34,21 @@ import AwbLink from "@/components/awb/AwbLink";
 import { useSite } from "@/components/site/SiteContext";
 import {
   DAMAGE_TYPES,
+  HOUSE_AWBS,
   PACK_TYPES,
   VARIANCE_TOLERANCE,
   VOLUMETRIC_DIVISOR,
   chargeableKg,
   detailsFor,
+  formatDate,
+  formatDateTime,
   formatKg,
   listAwbs,
   round2,
   variance,
   volumetricKg,
 } from "@/lib/domain";
+import type { AcceptanceHwb, AcceptanceLine } from "@/lib/domain";
 
 /**
  * CMTS acceptance lineage.
@@ -57,6 +63,10 @@ import {
  * CARGOACCEPTANCE had no import counterpart. It does: this is the screen. A
  * reader tracing a legacy column has to be able to land here, so the lineage
  * is named on the screen rather than only in the domain layer.
+ *
+ * Two of the three are now *rendered* here and not merely named — see the
+ * acceptance-record card below. Naming a table a screen writes but never shows
+ * is how a column goes missing at migration without anyone noticing.
  */
 const CMTS_SOURCE_TABLES = [
   {
@@ -65,11 +75,11 @@ const CMTS_SOURCE_TABLES = [
   },
   {
     table: "ACCEPTENCEDETAIL",
-    meaning: "Per-line nature of goods, pieces, weight and dimensions",
+    meaning: "Per-line nature of goods, pieces, weight and dimensions — rendered above",
   },
   {
     table: "CARGOACCEPTANCEHWB",
-    meaning: "House breakdown when the accepted consignment is a consolidation",
+    meaning: "House breakdown when the accepted consignment is a consolidation — rendered above",
   },
   {
     table: "IMPORTAWBDETAIL",
@@ -102,8 +112,8 @@ export default function AcceptancePage() {
   const PACKAGE_CONDITIONS = ["Intact", "Minor damage", "Major damage", "Tampered"] as const;
   const SEAL_STATUSES = ["Unbroken", "Broken — seal #", "Missing", "Re-sealed"] as const;
 
-  // Legacy CMTS HAWB / routing identity + receiving-agent sign-off (demo mock).
-  const identity = { hawb: "HWB-DBS-001", flight: "EK 612 · 12 May 2026", origin: "DXB" };
+  // Receiving-agent sign-off (demo mock). The routing identity that used to sit
+  // beside it is now derived per consignment — see `identityChips` below.
   const receiver = { name: "Ahmed Khan", station: "KHI · AFU", timestamp: "13 May 2026, 14:22" };
   const sealNumber = "SP-238911";
 
@@ -123,6 +133,136 @@ export default function AcceptancePage() {
   const totalDeclared = details.reduce((n, d) => n + d.PCS, 0);
   const totalReceived = details.reduce((n, d) => n + d.RECEIVEDPCS, 0);
   const v = variance(totalDeclared, totalReceived);
+
+  /* ------------------------------------------------------------------ *
+   * The acceptance event, in CMTS's own tables.
+   *
+   * IMPORTAWBDETAIL is the *receipt* — what was found in the shed when the
+   * cargo was opened up. CMTS records the acceptance itself somewhere else
+   * entirely, in CARGOACCEPTANCE / ACCEPTENCEDETAIL / CARGOACCEPTANCEHWB, and
+   * the demo carries typed rows for that trio only on the export consignment
+   * because the legacy counter screen was rebuilt on that side first. Both
+   * sides of the terminal write the same three tables, so the import rows are
+   * projected here from the fixtures this screen already holds rather than
+   * left blank: a blank would read as "import acceptance writes nothing",
+   * which is the opposite of the truth and exactly the kind of silence that
+   * loses a column at migration.
+   *
+   * Everything below is derived from the selected AWB and never drawn at
+   * random, so the same consignment always yields the same reference and a
+   * walkthrough can be replayed.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * `varchar(13)` — station prefix plus a zero-padded counter, the same shape
+   * the export counter issues, because an operator reading a CARGOID off a
+   * consignment cannot tell which side of the terminal minted it and the two
+   * screens must not disagree about what the reference looks like.
+   *
+   * It stays text with an alpha prefix and leading zeros precisely so it
+   * cannot be mistaken for — or quietly retyped as — a numeric key. This is
+   * the physical cargo reference the operator reads off the consignment in
+   * front of them; a parse to int destroys the prefix and the padding both.
+   *
+   * The counter comes off the demo's own AWB id only because that is what is
+   * unique and stable per consignment in a fixture layer. CMTS mints the real
+   * reference at the counter and nothing rendered here depends on where the
+   * digits came from — this is a stand-in for a number the demo cannot issue.
+   */
+  const cargoId = `${awb.site}${String(2200 + awb.AWBId).padStart(10, "0")}`;
+
+  /**
+   * The acceptance clock is `intakeAt` — not `arrivedAt`, and not the AWB's
+   * own CARGODATE, both of which are the flight landing. FC-07 §01 makes
+   * intake a separate event from the aircraft coming on stand, and breakdown
+   * and the ramp queue can put hours between the two. CARGODATE on the
+   * acceptance trio timestamps the acceptance, so it has to follow intake or
+   * the record claims the cargo was accepted before anyone had custody of it.
+   */
+  const cargoDate = awb.intakeAt;
+
+  /**
+   * ACCEPTENCEDETAIL — one row per IMPORTAWBDETAIL line.
+   *
+   * `CARGODATE` + `CARGOID` is the whole of the relation back to the
+   * acceptance header; both are copied off the pair above rather than rebuilt
+   * per row, so no line can drift onto a different acceptance. The dimension
+   * columns fall back to 0 where a line has not been measured yet — the legacy
+   * type has no null for them, and §14 above is where the measurement is
+   * actually taken.
+   */
+  const acceptanceLines: AcceptanceLine[] = details.map((d) => ({
+    CARGODATE: cargoDate,
+    CARGOID: cargoId,
+    SEQUENCE: d.SEQUENCE,
+    NATUREOFGOODS: d.GOODS,
+    PCS: d.PCS,
+    WEIGHT: d.WEIGTH,
+    WIDTH: d.dimensions?.widthCm ?? 0,
+    HEIGHT: d.dimensions?.heightCm ?? 0,
+    LENGTH: d.dimensions?.lengthCm ?? 0,
+    UNIT: d.dimensions?.unit ?? "cm",
+  }));
+
+  /**
+   * CARGOACCEPTANCEHWB — written only when the accepted consignment is a
+   * consolidation and one master covers several houses. An empty array is
+   * therefore a meaningful "straight master", not missing data, which is why
+   * the block below renders a stated empty state instead of disappearing.
+   *
+   * House numbers come from the consolidation fixture rather than being minted
+   * here, so the same house reads identically on /import/consolidation.
+   */
+  const acceptanceHouses: AcceptanceHwb[] = awb.IsHwb
+    ? HOUSE_AWBS.filter((h) => h.AWBNO === awb.AWBNO).map((h, i, all) => ({
+        HWBNO: h.HWB,
+        /**
+         * `int` here and `varchar` on the header — CMTS genuinely disagrees
+         * with itself across the two tables, and reconciling them is a
+         * migration decision nobody has taken, so no attempt is made to echo
+         * the header's text value. The last house carries null because an
+         * ungrouped house is the ordinary case a screen has to render: a blank
+         * cell, not a zero.
+         */
+        CARGOGROUP: i === all.length - 1 ? null : 30 + i,
+        CARGODATE: cargoDate,
+      }))
+    : [];
+
+  /**
+   * The consignment's routing identity, shown as chips under the title.
+   *
+   * These were three fixed strings, which put the page header in direct
+   * conflict with the record below it: every consignment claimed house
+   * `HWB-DBS-001`, flight EK 612 and origin DXB no matter which one was picked
+   * out of the queue, while the CARGOACCEPTANCEHWB card renders the real house
+   * numbers off the consolidation fixture. One screen showing two different
+   * values for the same legacy column is precisely the ambiguity a migration
+   * reader cannot resolve, so HWBNO now has a single source on this page — the
+   * same rows the house card reads.
+   *
+   * The HAWB chip disappears entirely for a straight master rather than
+   * falling back to a borrowed number: a consignment with no houses has no
+   * house number, and showing none is the honest answer. Where a consolidation
+   * carries several houses the chip counts them instead of naming one, since
+   * naming only the first would misrepresent the rest.
+   */
+  const identityChips: { label: string; value: string; icon: typeof Plane | null }[] = [
+    ...(acceptanceHouses.length > 0
+      ? [
+          {
+            label: "HAWB",
+            value:
+              acceptanceHouses.length === 1
+                ? acceptanceHouses[0].HWBNO
+                : `${acceptanceHouses.length} houses`,
+            icon: null,
+          },
+        ]
+      : []),
+    { label: "Flight", value: `${awb.FLIGHT} · ${formatDate(awb.arrivedAt)}`, icon: Plane },
+    { label: "Origin", value: awb.ORIGIN, icon: null },
+  ];
 
   // FC-01 §13 acceptance checklist — legacy CMTS sign-off items (demo mock).
   const acceptanceChecklist = [
@@ -163,13 +303,7 @@ export default function AcceptancePage() {
               Piece-by-piece receipt including short-landed, damaged and part-received cargo.
             </p>
             <div className="flex items-center gap-2 mt-3 flex-wrap">
-              {(
-                [
-                  ["HAWB", identity.hawb, null],
-                  ["Flight", identity.flight, Plane],
-                  ["Origin", identity.origin, null],
-                ] as const
-              ).map(([label, value, Icon]) => (
+              {identityChips.map(({ label, value, icon: Icon }) => (
                 <span
                   key={label}
                   className="h-7 px-2.5 rounded-lg border border-[#E2E8F0] bg-white inline-flex items-center gap-1.5 text-[12px]"
@@ -424,9 +558,24 @@ export default function AcceptancePage() {
           {details.map((d) => (
             <div key={d.DetailId} className="rounded-xl border border-[#E2E8F0] overflow-hidden">
               <div className="px-4 py-3 bg-[#F8FAFC] border-b border-[#E2E8F0] flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[12px] font-bold text-[#64748B]">Line {d.SEQUENCE}</span>
                   <span className="text-[13px] font-semibold text-[#0F172A]">{d.GOODS}</span>
+                  {/*
+                    IGMNO belongs in the row header, not in the column grid
+                    below. IMPORTAWBDETAIL is keyed on IGMNO + AWBNO + SEQUENCE
+                    and the other two thirds of that key are already here —
+                    SEQUENCE as the line number, AWBNO in the page header — so
+                    this is where the row says which record it is. Dropped into
+                    the grid it would read as one more measured value and
+                    truncate to nothing at a sixth of the card's width.
+                  */}
+                  <span className="h-[20px] px-2 rounded bg-white border border-[#E2E8F0] inline-flex items-center gap-1.5">
+                    <span className="text-[9px] font-mono text-[#CBD5E1]">IGMNO</span>
+                    <span className="text-[11px] font-mono font-semibold text-[#0F172A]">
+                      {d.IGMNO}
+                    </span>
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {d.SHORTLANDED > 0 && (
@@ -507,6 +656,133 @@ export default function AcceptancePage() {
               )}
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* The acceptance event itself — CMTS's own tables, keyed by CARGODATE + CARGOID */}
+      <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+          <ClipboardList size={15} className="text-[#64748B]" />
+          <div>
+            <h3 className="text-[14px] font-semibold text-[#0F172A]">Acceptance record</h3>
+            <p className="text-[11px] text-[#94A3B8] mt-0.5">
+              The worksheet above is the receipt. This is what the acceptance event itself writes —
+              ACCEPTENCEDETAIL, and CARGOACCEPTANCEHWB when the master is a consolidation.
+            </p>
+          </div>
+        </div>
+
+        {/* The acceptance key — both columns repeat on every row below */}
+        <div className="px-5 py-4 bg-[#F8FAFC] border-b border-[#E2E8F0] flex items-start gap-x-8 gap-y-4 flex-wrap">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] font-mono text-[#CBD5E1]">CARGOID</span>
+            <span className="text-[15px] font-mono font-bold text-[#0F172A]">{cargoId}</span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[9px] font-mono text-[#CBD5E1]">CARGODATE</span>
+            <span className="text-[15px] font-semibold text-[#0F172A]">
+              {formatDateTime(cargoDate)}
+            </span>
+          </div>
+          <p className="text-[11px] text-[#94A3B8] leading-relaxed flex-1 min-w-[260px]">
+            The physical cargo reference an operator reads off the consignment — a business
+            identifier, not a key. Together with CARGODATE it is the entire relation between the
+            acceptance header and every detail and house row beneath it, which is why both repeat on
+            each row instead of being replaced by a join column.
+          </p>
+        </div>
+
+        <div className="p-5 flex flex-col gap-6">
+          {/* ACCEPTENCEDETAIL — nature of goods, one row per detail line */}
+          <div>
+            <div className="flex items-baseline gap-2 mb-2.5">
+              <h4 className="text-[13px] font-semibold text-[#0F172A]">Nature of goods</h4>
+              <span className="font-mono text-[10px] font-semibold text-[#1B4F8B]">
+                ACCEPTENCEDETAIL
+              </span>
+            </div>
+            <div className="rounded-xl border border-[#E2E8F0] overflow-hidden">
+              <div className="grid grid-cols-[70px_1fr] gap-4 px-4 py-2 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                <span className="text-[9px] font-mono text-[#CBD5E1]">SEQUENCE</span>
+                <span className="text-[9px] font-mono text-[#CBD5E1]">NATUREOFGOODS</span>
+              </div>
+              <div className="divide-y divide-[#F1F5F9]">
+                {acceptanceLines.map((l) => (
+                  <div key={l.SEQUENCE} className="grid grid-cols-[70px_1fr] gap-4 px-4 py-2.5">
+                    <span className="text-[13px] font-mono font-semibold text-[#64748B]">
+                      {l.SEQUENCE}
+                    </span>
+                    <span className="text-[13px] font-medium text-[#0F172A]">
+                      {l.NATUREOFGOODS}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="text-[11px] text-[#94A3B8] mt-2 leading-relaxed">
+              Free text off the AWB, as the operator reads it — not the classified subclass, which
+              is picked at indexation and can differ from what the shipper wrote. The pieces, weight
+              and dimension columns sit on these same rows and are already rendered by §14 and the
+              worksheet, so they are not repeated here.
+            </p>
+          </div>
+
+          {/* CARGOACCEPTANCEHWB — house breakdown, consolidations only */}
+          <div>
+            <div className="flex items-baseline gap-2 mb-2.5">
+              <Layers size={13} className="text-[#64748B] self-center" />
+              <h4 className="text-[13px] font-semibold text-[#0F172A]">House breakdown</h4>
+              <span className="font-mono text-[10px] font-semibold text-[#1B4F8B]">
+                CARGOACCEPTANCEHWB
+              </span>
+            </div>
+            {acceptanceHouses.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3.5">
+                <p className="text-[12px] font-semibold text-[#64748B]">
+                  Straight master — no house rows
+                </p>
+                <p className="text-[11px] text-[#94A3B8] mt-0.5 leading-relaxed">
+                  CMTS writes CARGOACCEPTANCEHWB only when one accepted master covers several
+                  houses. No rows is the answer for this consignment, not missing data.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="rounded-xl border border-[#E2E8F0] overflow-hidden">
+                  <div className="grid grid-cols-3 gap-4 px-4 py-2 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                    <span className="text-[9px] font-mono text-[#CBD5E1]">HWBNO</span>
+                    <span className="text-[9px] font-mono text-[#CBD5E1]">CARGOGROUP</span>
+                    <span className="text-[9px] font-mono text-[#CBD5E1]">CARGODATE</span>
+                  </div>
+                  <div className="divide-y divide-[#F1F5F9]">
+                    {acceptanceHouses.map((h) => (
+                      <div key={h.HWBNO} className="grid grid-cols-3 gap-4 px-4 py-2.5">
+                        <span className="text-[13px] font-mono font-semibold text-[#0F172A] truncate">
+                          {h.HWBNO}
+                        </span>
+                        <span
+                          className="text-[13px] font-mono"
+                          style={{ color: h.CARGOGROUP === null ? "#94A3B8" : "#0F172A" }}
+                        >
+                          {h.CARGOGROUP === null ? "—" : h.CARGOGROUP}
+                        </span>
+                        <span className="text-[13px] text-[#64748B] truncate">
+                          {formatDateTime(h.CARGODATE)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#94A3B8] mt-2 leading-relaxed">
+                  CARGOGROUP is an int on the house rows and a varchar on the acceptance header —
+                  CMTS disagrees with itself across the two tables, so neither is coerced into the
+                  other here. A dash is an ungrouped house, which is normal; it is not a zero.
+                  CARGODATE repeats the acceptance key so a house cannot be read against the wrong
+                  acceptance.
+                </p>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

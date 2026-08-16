@@ -7,7 +7,7 @@
  *   Cargo taxonomy     CMTS `CARGOCLASS` (16), `CARGOSUBCLASS` (17)
  *   Storage            CMTS `LOCATION` (17), `CARGOSUBCLASSLOCATION` (4)
  *   Charges            CMTS `CARGOSUBCLASSCHARGES` (15), `LOCATIONCHARGES` (10),
- *                      `CargoClassCharges` (7), `TaxType` (12)
+ *                      `CargoClassCharges` (7), `TaxType` (12), `CHARGETYPE` (7)
  *   Parties            CMTS `SHIPPER` (11), `CONSIGNEE` (13), `AGENCY` (11)
  *
  * The cargo taxonomy below is FC-03's three groups verbatim.
@@ -146,7 +146,12 @@ export interface CargoSubClass {
   NAME: string;
   DESCRIPTION: string;
   ABBREVATION: string;
-  /** CMTS `MINCHARGES` */
+  /**
+   * CMTS `MINCHARGES` float — the minimum chargeable amount for the subclass.
+   * It is a floor, not a line item: FC-07 bills the computed storage total or
+   * this, whichever is greater, which is why a zero here (HUM, DIP, and the
+   * customs-held subclasses) means "no floor", not "free".
+   */
   MINCHARGES: Amount;
   /** CMTS `Authority` */
   Authority: string | null;
@@ -208,7 +213,17 @@ export interface StorageLocation {
   ABBREVATION: string;
   DESCRIPTION: string;
   Authority: string | null;
-  Remarks: string | null;
+  /**
+   * CMTS `REMARKS` nvarchar(500) — the zone's standing handling note.
+   *
+   * Spelled uppercase here on purpose. The demo previously modelled this column
+   * as `Remarks`, matching `CARGOSUBCLASS.Remarks`, but LOCATION spells it
+   * `REMARKS` in the source schema and the two are separate columns on separate
+   * tables. Migration parity is checked by column name, so the casing carries
+   * meaning: renaming it back would make LOCATION's note look like it had never
+   * been mapped. Nothing outside this file read the old name.
+   */
+  REMARKS: string | null;
   /** Capacity in chargeable kg — the allocation engine checks against this. */
   capacityKg: number;
   /** Currently occupied, kg. */
@@ -221,26 +236,26 @@ export interface StorageLocation {
 
 /** Zone names taken from FC-03's right-hand column. */
 const ZONE_DEFS: Array<Omit<StorageLocation, "ID" | "site" | "occupiedKg">> = [
-  { CLASSID: 1, NAME: "Normal Warehouse Racks", ABBREVATION: "GCR-RACK", DESCRIPTION: "Standard racking, 3 levels", Authority: null, Remarks: null, capacityKg: 120000, isHoldZone: false },
-  { CLASSID: 2, NAME: "Heavy Cargo Floor", ABBREVATION: "AFU-FLOOR", DESCRIPTION: "Ground-level heavy lift area", Authority: "Warehouse Manager", Remarks: null, capacityKg: 80000, isHoldZone: false },
-  { CLASSID: 3, NAME: "Priority Release Zone", ABBREVATION: "ICG-PRZ", DESCRIPTION: "Fast-turnaround staging", Authority: null, Remarks: null, capacityKg: 25000, isHoldZone: false },
-  { CLASSID: 4, NAME: "UAB Area", ABBREVATION: "UAB-AREA", DESCRIPTION: "Unaccompanied baggage", Authority: null, Remarks: null, capacityKg: 15000, isHoldZone: false },
-  { CLASSID: 5, NAME: "Segregated Store", ABBREVATION: "DGR-SEG", DESCRIPTION: "DGR segregated store", Authority: "DGR Certified Officer", Remarks: "IATA segregation table applies", capacityKg: 18000, isHoldZone: false },
-  { CLASSID: 6, NAME: "Cold Chain Storage", ABBREVATION: "PER-COLD", DESCRIPTION: "Multi-regime cold chain", Authority: "Cold Chain Officer", Remarks: null, capacityKg: 30000, isHoldZone: false, tempBandC: [-20, 25] },
-  { CLASSID: 7, NAME: "Vault / Strong Room", ABBREVATION: "VAL-VAULT", DESCRIPTION: "Dual-custody strong room", Authority: "Security Manager", Remarks: null, capacityKg: 4000, isHoldZone: false },
-  { CLASSID: 8, NAME: "Climate-controlled Animal Area", ABBREVATION: "AVI-AREA", DESCRIPTION: "Live animal holding", Authority: "Veterinary Officer", Remarks: null, capacityKg: 6000, isHoldZone: false, tempBandC: [15, 25] },
-  { CLASSID: 9, NAME: "Special Handling Area", ABBREVATION: "HUM-SHA", DESCRIPTION: "Human remains", Authority: "Duty Manager", Remarks: null, capacityKg: 3000, isHoldZone: false },
-  { CLASSID: 10, NAME: "Priority AOG Zone", ABBREVATION: "AOG-PZ", DESCRIPTION: "Aircraft-on-ground spares", Authority: null, Remarks: null, capacityKg: 8000, isHoldZone: false },
-  { CLASSID: 11, NAME: "Controlled Access Area", ABBREVATION: "DIP-CAA", DESCRIPTION: "Diplomatic cargo", Authority: "Duty Manager", Remarks: null, capacityKg: 3000, isHoldZone: false },
-  { CLASSID: 12, NAME: "Secure / High-risk Area", ABBREVATION: "VUN-SEC", DESCRIPTION: "Theft-prone cargo", Authority: "Security Manager", Remarks: null, capacityKg: 9000, isHoldZone: false },
-  { CLASSID: 13, NAME: "Pharma Store", ABBREVATION: "PHR-STORE", DESCRIPTION: "GDP-compliant pharma", Authority: "Cold Chain Officer", Remarks: null, capacityKg: 12000, isHoldZone: false, tempBandC: [2, 8] },
-  { CLASSID: 14, NAME: "Bonded Storage", ABBREVATION: "BND-STORE", DESCRIPTION: "Airline bonded cargo", Authority: "Customs Officer", Remarks: null, capacityKg: 22000, isHoldZone: true },
-  { CLASSID: 15, NAME: "Transhipment Bonded Zone", ABBREVATION: "TRF-ZONE", DESCRIPTION: "FC-09 bonded transhipment", Authority: "Customs Officer", Remarks: "Under customs bond", capacityKg: 26000, isHoldZone: true },
-  { CLASSID: 16, NAME: "Customs Detained Area", ABBREVATION: "CDT-AREA", DESCRIPTION: "Detained by customs (Detend)", Authority: "Customs Officer", Remarks: null, capacityKg: 14000, isHoldZone: true },
-  { CLASSID: 17, NAME: "CDR / OSD Hold", ABBREVATION: "CDR-HOLD", DESCRIPTION: "Discrepancy quarantine", Authority: "Duty Manager", Remarks: null, capacityKg: 10000, isHoldZone: true },
-  { CLASSID: 18, NAME: "Exception / Quarantine", ABBREVATION: "MSH-QTN", DESCRIPTION: "Mishandled cargo", Authority: "Duty Manager", Remarks: null, capacityKg: 8000, isHoldZone: true },
-  { CLASSID: 19, NAME: "Re-export Holding Area", ABBREVATION: "REX-HOLD", DESCRIPTION: "Awaiting re-export", Authority: "Customs Officer", Remarks: null, capacityKg: 12000, isHoldZone: true },
-  { CLASSID: 20, NAME: "Auction / Disposal", ABBREVATION: "LST-AUC", DESCRIPTION: "Section 82 pipeline", Authority: "Customs Officer", Remarks: null, capacityKg: 16000, isHoldZone: true },
+  { CLASSID: 1, NAME: "Normal Warehouse Racks", ABBREVATION: "GCR-RACK", DESCRIPTION: "Standard racking, 3 levels", Authority: null, REMARKS: null, capacityKg: 120000, isHoldZone: false },
+  { CLASSID: 2, NAME: "Heavy Cargo Floor", ABBREVATION: "AFU-FLOOR", DESCRIPTION: "Ground-level heavy lift area", Authority: "Warehouse Manager", REMARKS: null, capacityKg: 80000, isHoldZone: false },
+  { CLASSID: 3, NAME: "Priority Release Zone", ABBREVATION: "ICG-PRZ", DESCRIPTION: "Fast-turnaround staging", Authority: null, REMARKS: null, capacityKg: 25000, isHoldZone: false },
+  { CLASSID: 4, NAME: "UAB Area", ABBREVATION: "UAB-AREA", DESCRIPTION: "Unaccompanied baggage", Authority: null, REMARKS: null, capacityKg: 15000, isHoldZone: false },
+  { CLASSID: 5, NAME: "Segregated Store", ABBREVATION: "DGR-SEG", DESCRIPTION: "DGR segregated store", Authority: "DGR Certified Officer", REMARKS: "IATA segregation table applies", capacityKg: 18000, isHoldZone: false },
+  { CLASSID: 6, NAME: "Cold Chain Storage", ABBREVATION: "PER-COLD", DESCRIPTION: "Multi-regime cold chain", Authority: "Cold Chain Officer", REMARKS: null, capacityKg: 30000, isHoldZone: false, tempBandC: [-20, 25] },
+  { CLASSID: 7, NAME: "Vault / Strong Room", ABBREVATION: "VAL-VAULT", DESCRIPTION: "Dual-custody strong room", Authority: "Security Manager", REMARKS: null, capacityKg: 4000, isHoldZone: false },
+  { CLASSID: 8, NAME: "Climate-controlled Animal Area", ABBREVATION: "AVI-AREA", DESCRIPTION: "Live animal holding", Authority: "Veterinary Officer", REMARKS: null, capacityKg: 6000, isHoldZone: false, tempBandC: [15, 25] },
+  { CLASSID: 9, NAME: "Special Handling Area", ABBREVATION: "HUM-SHA", DESCRIPTION: "Human remains", Authority: "Duty Manager", REMARKS: null, capacityKg: 3000, isHoldZone: false },
+  { CLASSID: 10, NAME: "Priority AOG Zone", ABBREVATION: "AOG-PZ", DESCRIPTION: "Aircraft-on-ground spares", Authority: null, REMARKS: null, capacityKg: 8000, isHoldZone: false },
+  { CLASSID: 11, NAME: "Controlled Access Area", ABBREVATION: "DIP-CAA", DESCRIPTION: "Diplomatic cargo", Authority: "Duty Manager", REMARKS: null, capacityKg: 3000, isHoldZone: false },
+  { CLASSID: 12, NAME: "Secure / High-risk Area", ABBREVATION: "VUN-SEC", DESCRIPTION: "Theft-prone cargo", Authority: "Security Manager", REMARKS: null, capacityKg: 9000, isHoldZone: false },
+  { CLASSID: 13, NAME: "Pharma Store", ABBREVATION: "PHR-STORE", DESCRIPTION: "GDP-compliant pharma", Authority: "Cold Chain Officer", REMARKS: null, capacityKg: 12000, isHoldZone: false, tempBandC: [2, 8] },
+  { CLASSID: 14, NAME: "Bonded Storage", ABBREVATION: "BND-STORE", DESCRIPTION: "Airline bonded cargo", Authority: "Customs Officer", REMARKS: null, capacityKg: 22000, isHoldZone: true },
+  { CLASSID: 15, NAME: "Transhipment Bonded Zone", ABBREVATION: "TRF-ZONE", DESCRIPTION: "FC-09 bonded transhipment", Authority: "Customs Officer", REMARKS: "Under customs bond", capacityKg: 26000, isHoldZone: true },
+  { CLASSID: 16, NAME: "Customs Detained Area", ABBREVATION: "CDT-AREA", DESCRIPTION: "Detained by customs (Detend)", Authority: "Customs Officer", REMARKS: null, capacityKg: 14000, isHoldZone: true },
+  { CLASSID: 17, NAME: "CDR / OSD Hold", ABBREVATION: "CDR-HOLD", DESCRIPTION: "Discrepancy quarantine", Authority: "Duty Manager", REMARKS: null, capacityKg: 10000, isHoldZone: true },
+  { CLASSID: 18, NAME: "Exception / Quarantine", ABBREVATION: "MSH-QTN", DESCRIPTION: "Mishandled cargo", Authority: "Duty Manager", REMARKS: null, capacityKg: 8000, isHoldZone: true },
+  { CLASSID: 19, NAME: "Re-export Holding Area", ABBREVATION: "REX-HOLD", DESCRIPTION: "Awaiting re-export", Authority: "Customs Officer", REMARKS: null, capacityKg: 12000, isHoldZone: true },
+  { CLASSID: 20, NAME: "Auction / Disposal", ABBREVATION: "LST-AUC", DESCRIPTION: "Section 82 pipeline", Authority: "Customs Officer", REMARKS: null, capacityKg: 16000, isHoldZone: true },
 ];
 
 /** Occupancy percentages, fixed per (site, zone) so the demo is reproducible. */
@@ -321,7 +336,21 @@ export interface Airline extends DomainRecord {
   ID: number;
   /** CMTS `AIRLINEID` — IATA code. */
   AIRLINEID: string;
+  /**
+   * CMTS `ABBREVATION` varchar(15) — the carrier short name printed on manifests
+   * and vouchers. Wider than `AIRLINEID` because legacy allows a house
+   * abbreviation that is not the IATA code; the demo data happens to match, so a
+   * screen must still read this column rather than reusing `AIRLINEID`.
+   */
   ABBREVATION: string;
+  /**
+   * CMTS `LOGO` varchar(200) — a server-relative path into the legacy CMTS image
+   * share, NOT a URL and NOT the image itself. AirVault has no asset store, so
+   * this is an opaque migration string: render it as text, never as an `<img>`
+   * src, or the screen will show a broken image for every carrier. NULL is
+   * normal — legacy never required a logo on file.
+   */
+  LOGO: string | null;
   DESCRIPTION: string;
   /** CMTS `COUNTRY` */
   COUNTRY: string;
@@ -347,14 +376,15 @@ const AUDIT = {
 const KHI_KEYS = { CityId: 1, Comp_Code: 1, Off_Code: 1 } as const;
 
 export const AIRLINES: Airline[] = [
-  { ...AUDIT, ...KHI_KEYS, ID: 1, AIRLINEID: "EK", ABBREVATION: "EK", DESCRIPTION: "Emirates", COUNTRY: "United Arab Emirates", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 2, AIRLINEID: "QR", ABBREVATION: "QR", DESCRIPTION: "Qatar Airways", COUNTRY: "Qatar", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 3, AIRLINEID: "EY", ABBREVATION: "EY", DESCRIPTION: "Etihad Airways", COUNTRY: "United Arab Emirates", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 4, AIRLINEID: "TK", ABBREVATION: "TK", DESCRIPTION: "Turkish Airlines", COUNTRY: "Türkiye", DOBYSAPS: false, DOAMOUNT: 4000, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 5, AIRLINEID: "PK", ABBREVATION: "PK", DESCRIPTION: "Pakistan International Airlines", COUNTRY: "Pakistan", DOBYSAPS: true, DOAMOUNT: 2500, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 6, AIRLINEID: "SV", ABBREVATION: "SV", DESCRIPTION: "Saudia", COUNTRY: "Saudi Arabia", DOBYSAPS: true, DOAMOUNT: 3200, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 7, AIRLINEID: "CV", ABBREVATION: "CV", DESCRIPTION: "Cargolux", COUNTRY: "Luxembourg", DOBYSAPS: false, DOAMOUNT: 4500, SCHEDULED: false, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 8, AIRLINEID: "PA", ABBREVATION: "PA", DESCRIPTION: "Airblue", COUNTRY: "Pakistan", DOBYSAPS: true, DOAMOUNT: 2200, SCHEDULED: true, APPROVEDBYIATA: false },
+  { ...AUDIT, ...KHI_KEYS, ID: 1, AIRLINEID: "EK", ABBREVATION: "EK", LOGO: "~/Images/AirlineLogos/EK.gif", DESCRIPTION: "Emirates", COUNTRY: "United Arab Emirates", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 2, AIRLINEID: "QR", ABBREVATION: "QR", LOGO: "~/Images/AirlineLogos/QR.gif", DESCRIPTION: "Qatar Airways", COUNTRY: "Qatar", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 3, AIRLINEID: "EY", ABBREVATION: "EY", LOGO: "~/Images/AirlineLogos/EY.gif", DESCRIPTION: "Etihad Airways", COUNTRY: "United Arab Emirates", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 4, AIRLINEID: "TK", ABBREVATION: "TK", LOGO: "~/Images/AirlineLogos/TK.gif", DESCRIPTION: "Turkish Airlines", COUNTRY: "Türkiye", DOBYSAPS: false, DOAMOUNT: 4000, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 5, AIRLINEID: "PK", ABBREVATION: "PK", LOGO: "~/Images/AirlineLogos/PK.gif", DESCRIPTION: "Pakistan International Airlines", COUNTRY: "Pakistan", DOBYSAPS: true, DOAMOUNT: 2500, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 6, AIRLINEID: "SV", ABBREVATION: "SV", LOGO: "~/Images/AirlineLogos/SV.gif", DESCRIPTION: "Saudia", COUNTRY: "Saudi Arabia", DOBYSAPS: true, DOAMOUNT: 3200, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 7, AIRLINEID: "CV", ABBREVATION: "CV", LOGO: "~/Images/AirlineLogos/CV.gif", DESCRIPTION: "Cargolux", COUNTRY: "Luxembourg", DOBYSAPS: false, DOAMOUNT: 4500, SCHEDULED: false, APPROVEDBYIATA: true },
+  // No logo on file — the empty state is real in CMTS, so the demo carries one.
+  { ...AUDIT, ...KHI_KEYS, ID: 8, AIRLINEID: "PA", ABBREVATION: "PA", LOGO: null, DESCRIPTION: "Airblue", COUNTRY: "Pakistan", DOBYSAPS: true, DOAMOUNT: 2200, SCHEDULED: true, APPROVEDBYIATA: false },
 ];
 
 /** CMTS `AIRPORT` + `Flight_Airport` */
@@ -428,7 +458,7 @@ export const PARTIES: Party[] = [
 ];
 
 /* ================================================================== *
- * Tariff — CMTS `CARGOSUBCLASSCHARGES`, `LOCATIONCHARGES`, `TaxType`
+ * Tariff — CMTS `CARGOSUBCLASSCHARGES`, `LOCATIONCHARGES`, `TaxType`, `CHARGETYPE`
  * ================================================================== */
 
 /** FC-07 §08 — "Slabs: Day 1-3 Free | Day 4-7 | Day 8-14 | Day 15+ Charges" */
@@ -487,6 +517,64 @@ export const TAX_TYPES: TaxType[] = [
   { id: 1, Description: "Sales Tax on Services", ChargesType: "PERCENT", Amount: 15, IsDo: false, CityId: null },
   { id: 2, Description: "Withholding Tax", ChargesType: "PERCENT", Amount: 4, IsDo: false, CityId: null },
   { id: 3, Description: "DO Processing Tax", ChargesType: "PERCENT", Amount: 15, IsDo: true, CityId: null },
+];
+
+/**
+ * CMTS `CHARGETYPE` — the catalogue of charge headings the legacy calculator
+ * cascades through. It carries no rate of its own: the amounts live in
+ * `CARGOSUBCLASSCHARGES` / `LOCATIONCHARGES` / `CargoClassCharges`, and this
+ * table only names the heading each of those resolves into on the voucher.
+ *
+ * Only the four columns SAPS asked for are modelled. The rest of the legacy
+ * row is keys and office scoping, which this prototype deliberately omits, so
+ * `CHTYPEABB` is the natural key here.
+ */
+export interface ChargeType {
+  /** CMTS `CHTYPENAME` varchar(50) — heading as printed on the voucher. */
+  CHTYPENAME: string;
+  /** CMTS `CHTYPEABB` varchar(50) — short code used in the charge cascade. */
+  CHTYPEABB: string;
+  /** CMTS `CHTYPEDESC` varchar(50) — one-line explanation for the operator. */
+  CHTYPEDESC: string;
+  /**
+   * CMTS `NONUSEABEL` varchar(50) — legacy spelling, kept verbatim.
+   *
+   * UNCONFIRMED SEMANTICS — open decision ticket with SAPS. The name and the
+   * rows that carry it suggest "this charge type is retired", but nobody has
+   * confirmed what the stored strings mean, and a varchar(50) can hold far more
+   * than a flag (a date, an initial, a reason).
+   *
+   * So it stays a string. Do NOT narrow it to a boolean and do NOT filter the
+   * catalogue on it until SAPS answers: reading it as `!NONUSEABEL === active`
+   * would silently put every retired heading back on the calculator, which is
+   * how a charge SAPS stopped billing lands on a customer voucher. Render it
+   * verbatim and let a human read it.
+   */
+  NONUSEABEL: string | null;
+}
+
+/**
+ * Headings match the FC-07 charge block in finance.ts (`HANDLING`, `DEMURRAGE`,
+ * `DOCUMENTATION`, `DECONSOLIDATION`, `SPECIALHANDLING`, `MISCELLANEOUS`) plus
+ * the three cascade inputs that also print as their own line.
+ *
+ * The two `NONUSEABEL` values below are placeholder strings, not a decoded
+ * flag — see the field comment. They exist so the column has something to show
+ * on screen; nothing branches on them.
+ */
+export const CHARGE_TYPES: ChargeType[] = [
+  { CHTYPENAME: "Handling Charges", CHTYPEABB: "HND", CHTYPEDESC: "Terminal handling per chargeable kg", NONUSEABEL: null },
+  { CHTYPENAME: "Demurrage / Storage", CHTYPEABB: "DEM", CHTYPEDESC: "Storage rent beyond the free-day slabs", NONUSEABEL: null },
+  { CHTYPENAME: "Documentation Charges", CHTYPEABB: "DOC", CHTYPEDESC: "Per-AWB documentation fee", NONUSEABEL: null },
+  { CHTYPENAME: "Deconsolidation Charges", CHTYPEABB: "DECON", CHTYPEDESC: "House breakdown of a consol AWB", NONUSEABEL: null },
+  { CHTYPENAME: "Special Handling", CHTYPEABB: "SPH", CHTYPEDESC: "Class-driven special handling uplift", NONUSEABEL: null },
+  { CHTYPENAME: "Delivery Order Charge", CHTYPEABB: "DO", CHTYPEDESC: "DO issuance charge per AIRLINE.DOAMOUNT", NONUSEABEL: null },
+  { CHTYPENAME: "Location Charges", CHTYPEABB: "LOC", CHTYPEDESC: "Flat daily zone fee for hold zones", NONUSEABEL: null },
+  { CHTYPENAME: "Minimum Charges", CHTYPEABB: "MIN", CHTYPEDESC: "Subclass floor from CARGOSUBCLASS.MINCHARGES", NONUSEABEL: null },
+  { CHTYPENAME: "Storage Unit Charges", CHTYPEABB: "STU", CHTYPEDESC: "Per-unit charge from STORGEUNIT", NONUSEABEL: null },
+  { CHTYPENAME: "Miscellaneous", CHTYPEABB: "MISC", CHTYPEDESC: "Ad-hoc charge entered by the operator", NONUSEABEL: null },
+  { CHTYPENAME: "Manual Voucher Fee", CHTYPEABB: "MVF", CHTYPEDESC: "Superseded by the documentation heading", NONUSEABEL: "Y" },
+  { CHTYPENAME: "AFU Weight Surcharge", CHTYPEABB: "AFUW", CHTYPEDESC: "Legacy bulky-cargo weight surcharge", NONUSEABEL: "Y" },
 ];
 
 /** CMTS `LOCATIONCHARGES` */
@@ -563,6 +651,15 @@ export function airport(code: string): Airport | undefined {
 
 export function party(id: number): Party | undefined {
   return PARTIES.find((x) => x.ID === id);
+}
+
+/**
+ * Keyed on `CHTYPEABB` because the demo does not model CHARGETYPE's surrogate
+ * key. Returns retired-looking rows too — `NONUSEABEL` is not decoded yet, so
+ * this deliberately does not filter on it.
+ */
+export function chargeType(abb: string): ChargeType | undefined {
+  return CHARGE_TYPES.find((x) => x.CHTYPEABB === abb);
 }
 
 /**

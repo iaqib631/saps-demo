@@ -126,6 +126,7 @@ import type { DocumentSource, DocumentType, StoredDocument } from "./documents";
 import type { BondedHandover, TagBinding } from "./storage";
 import { SPECIAL_HANDLING_LABEL } from "./exportcargo";
 import type {
+  AcceptanceHwb,
   AcceptanceLine,
   CargoAcceptance,
   ClearanceRound,
@@ -178,6 +179,27 @@ function audit(createdDaysAgo: number, by = "s.khan") {
     IsActive: true,
     IsDeleted: false,
   };
+}
+
+/**
+ * Allocate a roll-up across `parts` detail lines so the lines add back to it
+ * EXACTLY, to the paisa.
+ *
+ * The obvious version — multiply by `1 / parts` and round each line — is what
+ * produces a voucher whose grid does not reach its own total. Rounding each
+ * share independently can drop or gain half a paisa per line, and because the
+ * GODOWNRENT `sum*` columns are printed directly above the GODOWNRENTDETAIL
+ * lines, that drift is visible on the page. So the first `parts - 1` lines
+ * take the rounded even share and the LAST line takes whatever is left. That
+ * is also how the allocation is done by hand, which matters when a finance
+ * officer reconciles the printed voucher against the legacy one.
+ */
+function splitExact(total: number, parts: number): number[] {
+  const whole = round2(total);
+  const each = round2(whole / parts);
+  const out = Array.from({ length: parts }, () => each);
+  out[parts - 1] = round2(whole - each * (parts - 1));
+  return out;
 }
 
 const GOODS = [
@@ -784,7 +806,23 @@ export const ARRIVAL_ADVICES: ArrivalAdvice[] = AWBS.filter((a) => hasReached(a.
  * Charges, godown rent, DO, invoices
  * ------------------------------------------------------------------ */
 
-export const CHARGE_CALCULATIONS = AWBS.filter((a) => hasReached(a.stage, "charged")).map((a) => {
+/**
+ * One filtered list, shared by the calculator, the GR voucher and the GR
+ * detail lines — not three separate `.filter()` calls that happen to agree.
+ *
+ * `CHARGECALCULATER.VOUCHERNO` only means anything if the number a quote
+ * carries is the *same string* the voucher is later issued under. Three
+ * independent filters produced that by coincidence of ordering; the first
+ * seed row inserted out of order would have silently paired a calculation
+ * with a different consignment's voucher, and nothing on screen would have
+ * looked wrong. The list and the number formatter are therefore defined once.
+ */
+const CHARGED_AWBS = AWBS.filter((a) => hasReached(a.stage, "charged"));
+
+/** GR voucher number — continues the CMTS series from 4419. */
+const grVoucherNo = (i: number) => `GR-2026-${String(4420 + i).padStart(5, "0")}`;
+
+export const CHARGE_CALCULATIONS = CHARGED_AWBS.map((a, i) => {
   const dims = { lengthCm: 120, widthCm: 80, heightCm: 90, unit: "cm" };
   return calculateCharges({
     awbId: a.AWBId,
@@ -800,6 +838,12 @@ export const CHARGE_CALCULATIONS = AWBS.filter((a) => hasReached(a.stage, "charg
     actualKg: a.TOTALWEIGHT,
     volumetricKg: round2((dims.lengthCm * dims.widthCm * dims.heightCm) / 6000),
     calculatedAt: DEMO_NOW,
+    // Every row here is an AWB that has already reached `charged`, so a GR
+    // voucher exists for each and the number is known. The nullable case —
+    // an uncommitted live quote with no voucher yet — is what a screen
+    // calling `calculateCharges()` interactively produces; seeding a null
+    // here instead would contradict the GODOWNRENT row sitting beside it.
+    voucherNo: grVoucherNo(i),
   });
 });
 
@@ -807,7 +851,7 @@ export function chargesFor(awbId: number) {
   return CHARGE_CALCULATIONS.find((c) => c.awbId === awbId);
 }
 
-export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage, "charged")).map(
+export const GODOWN_RENTS: GodownRent[] = CHARGED_AWBS.map(
   (a, i) => {
     const calc = chargesFor(a.AWBId)!;
     const paid = hasReached(a.stage, "do-issued");
@@ -815,20 +859,31 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
     const cls = cargoClass(a.CARGOCLASSID);
     const consigneeParty = PARTIES.find((p) => p.NAME === a.CONSIGNEE1);
 
+    // The gate pass prints IGM, AWB, DO and GR as four number+date pairs and
+    // an officer reads them top to bottom as the order the file moved in:
+    // IGMNODATE <= AWBNODATE <= DODATE <= GRDATE. The GR voucher is raised
+    // against a consignment the DO has already released, so it can never
+    // predate its own DO. Deriving the GR day FROM the DO day rather than
+    // from arrival independently is what keeps that ordering true — the
+    // previous fixed "arrival + 2" landed a day BEFORE the "arrival + 3" DO
+    // and printed a gate pass whose dates ran backwards.
+    const doDaysAgo = a.DODATE ? daysBetween(a.DODATE, DEMO_NOW) : null;
+    const grDaysAgo = doDaysAgo !== null ? Math.max(0, doDaysAgo - 1) : Math.max(0, totalDays - 2);
+
     return {
-      ...audit(Math.max(0, totalDays - 2), "finance.officer"),
+      ...audit(grDaysAgo, "finance.officer"),
       ...siteKeys(a.site),
       GodownId: i + 1,
-      VOUCHERNO: `GR-2026-${String(4420 + i).padStart(5, "0")}`,
+      VOUCHERNO: grVoucherNo(i),
       docNumber: {
         series: "GR_VOUCHER",
-        value: `GR-2026-${String(4420 + i).padStart(5, "0")}`,
+        value: grVoucherNo(i),
         sequence: 4420 + i,
         year: 2026,
         cargoClassId: a.CARGOCLASSID,
         continuesFromCmts: 4419,
       },
-      GRDATE: daysAgo(Math.max(0, totalDays - 2), 11, 30),
+      GRDATE: daysAgo(grDaysAgo, 11, 30),
       CHALLANNO: a.CHALLANNO,
       IGMNO: a.IGMNO,
       AWBNO: a.AWBNO,
@@ -876,7 +931,10 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
       CASH: paid && i % 3 === 0,
       CASHAMOUNT: paid && i % 3 === 0 ? calc.total : 0,
       PAYORDERNO: paid && i % 3 === 1 ? `PO-${String(88200 + i)}` : null,
-      PAYORDERDATE: paid && i % 3 === 1 ? daysAgo(1, 12, 0) : null,
+      // Clamped to the voucher's own day so payment can never predate the
+      // voucher it settles. On a same-day consignment `grDaysAgo` is 0 and a
+      // flat "yesterday" would have stamped the payment before the GR existed.
+      PAYORDERDATE: paid && i % 3 === 1 ? daysAgo(Math.min(1, grDaysAgo), 12, 0) : null,
       PAYORDERAMOUNT: paid && i % 3 === 1 ? calc.total : 0,
       PayOrder: paid && i % 3 === 1,
       Paymode: paid ? (i % 3 === 0 ? "CASH" : i % 3 === 1 ? "PAYORDER" : "GATEWAY") : null,
@@ -889,7 +947,7 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
       CHEQUENO: null,
       CHEQUEDATE: null,
       RECIEVEDBY: paid ? "finance.counter" : null,
-      PAYDATE: paid ? daysAgo(1, 12, 5) : null,
+      PAYDATE: paid ? daysAgo(Math.min(1, grDaysAgo), 12, 5) : null,
       OverPaidAmount: 0,
 
       DUPLICATECOUNT: i === 0 ? 1 : 0,
@@ -1044,10 +1102,32 @@ export const GODOWN_RENT_DETAILS: GodownRentDetail[] = GODOWN_RENTS.flatMap((g, 
   // Most consignments sit in one zone; a consolidation spans two.
   const zones = awb.IsHwb ? [loc, loc + 1] : [loc];
 
+  // Every money column below is split from the header's own value rather than
+  // recomputed from the calculator. Two different reasons, both about the
+  // screen: (1) the voucher shows the `sum*` roll-up directly above the grid
+  // these lines fill, so anything that re-derives the number from a second
+  // source can disagree with it; (2) an equal `1/n` share rounded per line
+  // loses up to half a paisa per line, and a total the grid beneath it does
+  // not reach is worse than no total at all — it looks authoritative and is
+  // wrong. `splitExact` gives the residue to the last line, which is how the
+  // allocation is done on paper too.
+  const split = (total: number) => splitExact(total, zones.length);
+
+  const weightParts = split(g.CHARGEABLEWEIGHT);
+  const withoutTaxParts = split(g.sumTotalAmountWithoutTax);
+  const taxParts = split(g.sumTax);
+  const handlingParts = split(g.sumHandlingCharges);
+  const storageParts = split(g.sumStorgeUnitCharges);
+  const locationParts = split(g.sumLocationChargesAmount);
+  const minimumParts = split(g.sumMinimumCharges);
+  const afuParts = split(g.sumAFUAmount);
+  const specialParts = split(g.SPECIALHANDLING);
+  const deconsolParts = split(g.DECONSOLIDATION);
+  const docParts = split(g.DOCUMENTATION);
+
   return zones.map((locationId, li) => {
-    const share = 1 / zones.length;
-    const withoutTax = round2(calc.subTotal * share);
-    const tax = round2(calc.taxAmount * share);
+    const withoutTax = withoutTaxParts[li];
+    const tax = taxParts[li];
     return {
       Id: gi * 10 + li + 1,
       GRNO: g.VOUCHERNO,
@@ -1056,19 +1136,23 @@ export const GODOWN_RENT_DETAILS: GodownRentDetail[] = GODOWN_RENTS.flatMap((g, 
       LOCATIONID: locationId,
       INDEXNO: li + 1,
       DAYS: calc.chargeableDays,
-      WEIGHT: round2(calc.chargeableKg * share),
+      WEIGHT: weightParts[li],
       HandlingUnit: "PER KG",
-      HandlingCharges: round2(calc.handlingAmount * share),
+      HandlingCharges: handlingParts[li],
       StorgeUnit: "PER KG / DAY",
-      StorgeUnitCharges: round2(calc.storageAmount * share),
+      StorgeUnitCharges: storageParts[li],
       LocationUnit: "PER DAY",
-      LocationCharges: round2(calc.locationChargesAmount * share),
-      MinimumCharges: round2(calc.minimumCharges * share),
-      SpecialCharges: round2(calc.specialHandlingCharges * share),
-      Deconsolidation: round2(calc.deconsolidationCharges * share),
-      DocCharges: round2(calc.documentationCharges * share),
-      // Advance Freight Undertaking — carried per line in CMTS.
-      AFUAmount: 0,
+      LocationCharges: locationParts[li],
+      MinimumCharges: minimumParts[li],
+      SpecialCharges: specialParts[li],
+      Deconsolidation: deconsolParts[li],
+      DocCharges: docParts[li],
+      // Advance Freight Undertaking — carried per line in CMTS, and it is the
+      // AFU-classed *slice of* `SpecialCharges` above, not a charge on top of
+      // it. Non-zero only where the cargo class is AFU, which is exactly the
+      // condition under which the header sets `sumAFUAmount`. A screen that
+      // adds `SpecialCharges + AFUAmount` into a line total double-bills.
+      AFUAmount: afuParts[li],
       Freedays: calc.freeDays,
       TaxPercentage: String(calc.taxPercent),
       Tax: tax,
@@ -1879,6 +1963,17 @@ export const REEXPORT_CASES: ReExportCase[] = [
 
 const LS_AWB = AWBS.find((a) => a.branch === "long-stay")!;
 
+/**
+ * `AWBSECTION82.CONTENTS` is varchar(250) — one free-text description of the
+ * whole lot, not one row per line. Joining the detail lines' goods (deduped)
+ * is what an officer actually writes on the notice: the statutory notice has
+ * to describe everything the case covers, and a consignment of two different
+ * commodities named after only the first one is not a lawful description.
+ */
+const LS_CONTENTS = [...new Set(detailsFor(LS_AWB.AWBId).map((d) => d.GOODS))]
+  .join(", ")
+  .slice(0, 250) || "General cargo";
+
 export const LONGSTAY_CASES: LongStayCase[] = [
   {
     ...audit(47, "compliance.officer"),
@@ -1899,6 +1994,21 @@ export const LONGSTAY_CASES: LongStayCase[] = [
       { id: 3, noticeNo: "S82-KHI-2026-0118", docNumber: { series: "SECTION_82_NOTICE", value: "S82-KHI-2026-0118", sequence: 118, year: 2026, cargoClassId: null, continuesFromCmts: 90 }, dueOffsetDays: 0, dueAt: daysAgo(17, 9, 0), recipients: ["consignee", "cha", "airline"], sentAt: null, status: "overdue" },
     ],
     escalatedToCustomsAt: daysAgo(15, 11, 0),
+
+    // The consignment descriptors carried ON the Section 82 case, read off
+    // AWBSECTION82 rather than derived from the AWB. They agree with the AWB
+    // here because this case covers the whole consignment and nothing has been
+    // released against it — but a screen must still read these columns, not
+    // `AWB.TOTALPCS`. The moment a consignment is partly delivered or partly
+    // seized, the AWB total overstates what the auction lot or the disposal
+    // certificate actually covers, and the statutory paperwork has to quote
+    // the smaller number. CARGODATE is the migrated legacy cargo date and is
+    // NOT a second dwell clock: `arrivedAt` remains the only input to
+    // `ageDays` / `daysToDeadline`, so no screen can quote a rival deadline.
+    CARGODATE: LS_AWB.CARGODATE,
+    CONTENTS: LS_CONTENTS,
+    PCS: LS_AWB.TOTALPCS,
+
     Examiner: "A. Malik",
     ReceivingPerson: null,
     DCNumber: "DC-2026-00744",
@@ -2121,11 +2231,14 @@ export function closureFor(awbId: number): ClosureState | null {
  * ------------------------------------------------------------------ */
 
 const EXPORT_SEED = [
-  { awb: "618-44120935", dest: "DXB", carrier: "EK", goods: "Surgical instruments", pcs: 84, kg: 1240 },
-  { awb: "618-44120946", dest: "LHR", carrier: "BA", goods: "Cotton garments", pcs: 210, kg: 3180 },
-  { awb: "618-44120957", dest: "JFK", carrier: "QR", goods: "Sports goods", pcs: 156, kg: 2440 },
-  { awb: "618-44120968", dest: "AMS", carrier: "KL", goods: "Chilled seafood", pcs: 64, kg: 980 },
-  { awb: "618-44120979", dest: "IST", carrier: "TK", goods: "Machinery parts", pcs: 122, kg: 4260 },
+  // `houses` drives CARGOACCEPTANCEHWB. CMTS writes those rows only for a
+  // consolidation, so 0 is a straight master and the empty array that results
+  // means "not a consolidation" — it is an answer, not missing data.
+  { awb: "618-44120935", dest: "DXB", carrier: "EK", goods: "Surgical instruments", pcs: 84, kg: 1240, houses: 0 },
+  { awb: "618-44120946", dest: "LHR", carrier: "BA", goods: "Cotton garments", pcs: 210, kg: 3180, houses: 3 },
+  { awb: "618-44120957", dest: "JFK", carrier: "QR", goods: "Sports goods", pcs: 156, kg: 2440, houses: 2 },
+  { awb: "618-44120968", dest: "AMS", carrier: "KL", goods: "Chilled seafood", pcs: 64, kg: 980, houses: 0 },
+  { awb: "618-44120979", dest: "IST", carrier: "TK", goods: "Machinery parts", pcs: 122, kg: 4260, houses: 0 },
 ];
 
 export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i) => {
@@ -2148,9 +2261,36 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
   const netKg = round2(grossKg - tareKg);
   const varianceKg = round2(netKg - declaredKg);
 
+  const cargoId = `${site}${String(7100 + i).padStart(10, "0")}`;
+
+  // Counter clock. TIMEOFWEIGHMENT / TIMEOFACCEPTENCE are CMTS varchar(5)
+  // with no date attached, so nothing in the type can enforce "accepted at or
+  // after weighed" — only the seeding can. Acceptance is therefore DERIVED
+  // from weighment by a positive offset instead of drawn independently, and
+  // the same two readings feed `weighedAt` and `CARGODATE` so the timestamp
+  // and the text column can never disagree about the same consignment.
+  //
+  // Its own generator, not the row's `rng`: drawing these from `rng` would
+  // have shifted every downstream `pick()` on the record — agent, shipper,
+  // consignee — and quietly rewritten data that has nothing to do with the
+  // clock. The window is also kept inside the morning (latest 09:15) because
+  // screening is stamped at 10:05 and acceptance cannot follow it.
+  const clockRng = seeded((i + 1) * 9187);
+  const weighHour = 7 + intBetween(clockRng, 0, 1);
+  const weighMin = intBetween(clockRng, 0, 40);
+  const acceptMinutes = weighHour * 60 + weighMin + intBetween(clockRng, 10, 35);
+  const hhmm = (h: number, m: number) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  const acceptHour = Math.floor(acceptMinutes / 60);
+  const acceptMin = acceptMinutes % 60;
+
   const acceptance: CargoAcceptance = {
-    CARGODATE: daysAgo(acceptedDaysAgo, 8, 30),
-    CARGOID: 7100 + i,
+    CARGODATE: daysAgo(acceptedDaysAgo, acceptHour, acceptMin),
+    // varchar(13), station prefix + zero-padded counter — the reference the
+    // operator reads off the consignment, not a generated key. Seeded in the
+    // shape that breaks under a parse to int (leading zeros, alpha prefix) so
+    // any future retype back to `number` fails loudly in the fixtures instead
+    // of quietly on a screen.
+    CARGOID: cargoId,
     REVENUECODE: `RC-${420 + i}`,
     CARGOGROUP: "GENERAL",
     CARGOTYPE: "EXPORT",
@@ -2159,8 +2299,8 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
     BAGNO: null,
     LOADEDWEIGHT: grossKg,
     UNLOADEDWEIGHT: tareKg,
-    TIMEOFWEIGHMENT: "08:12",
-    TIMEOFACCEPTENCE: "08:30",
+    TIMEOFWEIGHMENT: hhmm(weighHour, weighMin),
+    TIMEOFACCEPTENCE: hhmm(acceptHour, acceptMin),
     VEHICALNO: `${site}-${String(4420 + i)}`,
     AGENTNAME: pick(rng, ["Al-Huda Clearing", "Pak Gulf CHA", "Swift Clear Agency"]),
     CARGOAGENTNAME: pick(rng, ["Skybridge Forwarding", "Indus Air Cargo", "Gulf Link Logistics"]),
@@ -2195,9 +2335,30 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
     UNIT: "cm",
   }));
 
+  /**
+   * CMTS `CARGOACCEPTANCEHWB` — the house breakdown, written only when the
+   * accepted master covers several houses. Empty for a straight master.
+   *
+   * `CARGODATE` + `CARGOID` is the whole of the relation back to the header;
+   * both are copied off `acceptance` rather than rebuilt from the seed so the
+   * houses cannot drift onto a different acceptance if the header's clock or
+   * reference changes.
+   *
+   * `CARGOGROUP` is int here and varchar on the header — CMTS really does
+   * disagree with itself across the two tables, so the fixture seeds an int
+   * code and does NOT try to echo the header's "GENERAL". The last house of
+   * each consolidation carries null, because an ungrouped house is the normal
+   * case a screen has to render (a blank cell, not a zero).
+   */
+  const hwb: AcceptanceHwb[] = Array.from({ length: seed.houses }, (_, hi) => ({
+    HWBNO: `HWB-${seed.dest}-2026-${String(4810 + i * 10 + hi).padStart(6, "0")}`,
+    CARGOGROUP: hi === seed.houses - 1 ? null : 30 + hi,
+    CARGODATE: acceptance.CARGODATE,
+  }));
+
   const weighment: Weighment = {
     scaleId: `SCALE-${site}-0${i + 1}`,
-    weighedAt: daysAgo(acceptedDaysAgo, 8, 12),
+    weighedAt: daysAgo(acceptedDaysAgo, weighHour, weighMin),
     weighedBy: "export.counter",
     grossKg,
     tareKg,
@@ -2473,6 +2634,7 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
     stage,
     acceptance,
     lines,
+    hwb,
     // Keyed at the acceptance counter off the shipper's paper. Consignment
     // i === 1 is the one whose invoice went in unverified — no supervisor
     // countersign — which is what the completeness gate picks up.

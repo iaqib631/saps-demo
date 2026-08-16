@@ -614,6 +614,38 @@ export interface LongStayCase extends DomainRecord {
   escalatedToCustomsAt: string | null;
 
   // CMTS `AWBSECTION82` specifics
+
+  /*
+   * What is actually sitting in the shed, from the AWBSECTION82 row itself.
+   *
+   * The case register has until now shown the AWB number and the dwell clock
+   * and nothing about the consignment, so an officer reading the register
+   * cannot answer the first question customs asks on a Section 82 case —
+   * what is it, how much of it, and how long has it been here. The dwell
+   * clock without the cargo description is a countdown on an unnamed thing.
+   *
+   * These three are deliberately NOT the same as the AWB-level figures the
+   * workbench already derives (`components/exceptions/long-stay/caseFile.ts`
+   * takes `pieces` from `AWB.TOTALPCS`). CMTS records them on the Section 82
+   * record because the statutory case covers the cargo still uncleared at
+   * the moment it was raised, which is not the whole AWB whenever part of a
+   * consignment was already delivered, short-landed or seized. Reading the
+   * AWB total instead would overstate what an auction lot or a disposal
+   * certificate is actually about.
+   *
+   * `CARGODATE` is likewise the legacy manifest cargo date carried across
+   * for migration parity, not a second dwell clock. `arrivedAt` above stays
+   * the authority for `ageDays` and `daysToDeadline` — nothing should
+   * re-derive the statutory countdown from this column, or two screens will
+   * quote two different deadlines on the same case.
+   */
+  /** CMTS `AWBSECTION82.CARGODATE` — datetime. */
+  CARGODATE: string;
+  /** CMTS `AWBSECTION82.CONTENTS` — varchar(250), the goods description. */
+  CONTENTS: string;
+  /** CMTS `AWBSECTION82.PCS` — int, pieces under the Section 82 case. */
+  PCS: number;
+
   Examiner: string | null;
   ReceivingPerson: string | null;
   DCNumber: string | null;

@@ -8,6 +8,7 @@
  *   `IMPORTAWBDETAIL` (32)  per-line receipt, incl. shortlanded / damage
  *   `IMPORTAWBLOCATION` (26) logical vs physical location assignment
  *   `AWBCONSOLE` (41)       house AWBs on a consolidation
+ *   `AWBConsolDetail` (13) per-house detail lines under the master
  *   `AWBSplit` (10)         split shipments
  *   `AwbDetendDetail` (7)   customs-detained sub-identity
  *   `AWBARRIVALADVICE` (15) arrival advice / NOA document
@@ -180,6 +181,18 @@ export interface Manifest extends DomainRecord {
   MANIFESTSTATUS: string;
   POSTINGDATE: string | null;
   MANIFESTNIL: string | null;
+  /**
+   * CMTS `DFLAG` varchar(1) — a legacy single-character status flag.
+   *
+   * Its value set is UNKNOWN and stays a string rather than a union. The
+   * restored CMTS database is schema-only: all 105 tables are empty, so the
+   * column's type, length and nullability are knowable and its actual
+   * domain is not. Any enum written here — `"Y" | "N"`, `"A" | "D"` — would
+   * be a guess wearing the authority of a type, and the migration would
+   * then reject legitimate legacy rows carrying a character we invented
+   * away. Narrow this only once SAPS supplies a data-bearing extract or
+   * confirms the value set; until then the flag is carried across verbatim.
+   */
   DFLAG: string | null;
   USERID: string;
   TRNO: number | null;
@@ -463,7 +476,8 @@ export function isDiverged(l: AWBLocation): boolean {
 }
 
 /* ================================================================== *
- * Consolidation & split — CMTS `AWBCONSOLE` (41), `AWBSplit` (10)
+ * Consolidation & split — CMTS `AWBCONSOLE` (41), `AWBConsolDetail` (13),
+ * `AWBSplit` (10)
  * ================================================================== */
 
 export interface HouseAWB extends DomainRecord {
@@ -502,6 +516,36 @@ export interface HouseAWB extends DomainRecord {
   IsLock: boolean;
   UniqueIdentification: string;
   DetendIdentification: string | null;
+}
+
+/**
+ * Per-house detail lines under the master — CMTS `AWBConsolDetail` (13).
+ *
+ * `AWBCONSOLE` above carries the house AWB itself; this table carries the
+ * lines beneath it, and the consolidation screen names it as a source
+ * without anything typed behind it. Only the two columns below are modelled
+ * here, because only these two arrived with their names and types verified
+ * against the schema restore. The remaining eleven — including whatever
+ * column carries the link back to the parent house — are deliberately
+ * absent rather than guessed: a column name invented here would travel onto
+ * a screen as a `cmts="…"` parity marker and read as verified migration
+ * mapping when it is nothing of the kind. Add them when the verbatim column
+ * list lands; a wrong name is worse than a missing one.
+ */
+export interface AWBConsolDetail {
+  /** CMTS `GROSSWEIGHT` float, nullable — gross vs the chargeable weight. */
+  GROSSWEIGHT: number | null;
+  /**
+   * CMTS `UNIQUEINDENTIFICATION` varchar(50), nullable.
+   *
+   * The misspelling is the column name. CMTS spells it INDENTIFICATION —
+   * with the extra N — on this table, while `AWBCONSOLE`, `AWBSplit` and the
+   * detend chain spell their own correlator `UniqueIdentification`. Both
+   * spellings are real and they are different columns on different tables,
+   * so "correcting" this one silently breaks the migration mapping for the
+   * table it belongs to. Keep it verbatim.
+   */
+  UNIQUEINDENTIFICATION: string | null;
 }
 
 export interface AWBSplitRecord {

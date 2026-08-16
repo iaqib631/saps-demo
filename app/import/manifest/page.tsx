@@ -216,12 +216,24 @@ export default function ManifestReconciliationPage() {
           </span>
         </div>
         <div className="p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-5 gap-y-4">
+          {/* AIRLINENAME sits beside AIRLINEID and ABBREVATION rather than
+              replacing them: all three are separate IMPORTMANIFIEST columns and
+              the manifest carries the carrier's full name in its own right, so
+              a reconciliation dispute quoting "Emirates" can be matched without
+              anyone resolving a two-letter code by hand.
+
+              DFLAG is rendered exactly as stored. Its value set is unconfirmed —
+              the restored CMTS database is schema-only, so the column's type and
+              nullability are known and its domain is not — and a legend invented
+              on this screen would read as verified meaning. See the footnote
+              below the grid. */}
           {(
             [
               ["IGMNO", m.IGMNO],
               ["REGNO", m.REGNO],
               ["FLIGHT", m.FLIGHT],
               ["AIRLINEID", m.AIRLINEID],
+              ["AIRLINENAME", m.AIRLINENAME],
               ["ABBREVATION", m.ABBREVATION],
               ["ORIGIN", m.ORIGIN],
               ["DESTINATION", m.DESTINATION],
@@ -232,6 +244,7 @@ export default function ManifestReconciliationPage() {
               ["MANIFESTSTATUS", m.MANIFESTSTATUS],
               ["STATUS1", m.STATUS1],
               ["STATUS2", m.STATUS2],
+              ["DFLAG", m.DFLAG ?? "—"],
               ["MANIFESTNIL", m.MANIFESTNIL ?? "—"],
               ["USERID", m.USERID],
               ["TRNO", m.TRNO ?? "—"],
@@ -240,9 +253,18 @@ export default function ManifestReconciliationPage() {
           ).map(([k, v]) => (
             <div key={k} className="flex flex-col gap-1">
               <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-              <span className="text-[13px] font-medium text-[#0F172A] truncate">{v}</span>
+              <span className="text-[13px] font-medium text-[#0F172A] truncate" title={String(v)}>
+                {v}
+              </span>
             </div>
           ))}
+        </div>
+        <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+          <p className="text-[11px] text-[#64748B]">
+            DFLAG is a legacy single-character flag shown verbatim. No label is put against it here:
+            the CMTS restore is schema-only, so what each character means is unconfirmed with SAPS
+            and a decoded legend would claim knowledge nobody has yet.
+          </p>
         </div>
       </div>
 

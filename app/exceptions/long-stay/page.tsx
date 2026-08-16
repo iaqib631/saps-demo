@@ -448,6 +448,74 @@ export default function LongStayPage() {
                 </div>
               </div>
 
+              {/* The consignment the statutory case is actually about.
+               *
+               * Its own card rather than three more cells on the Section 82
+               * grid above, because these three columns describe cargo and the
+               * six above describe the case handling — and because PCS here is
+               * NOT the piece count already shown in the case-register facts.
+               * That one is the AWB total (AWB.TOTALPCS, via the case file);
+               * this one is what the statutory case covers. On a consignment
+               * that was partly delivered or partly seized before the case
+               * opened, the AWB total overstates what an auction lot or a
+               * disposal certificate can lawfully cover, so the two numbers are
+               * shown together and reconciled on screen rather than one being
+               * allowed to stand in for the other. */}
+              <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
+                  <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                    Consignment under the case
+                  </h3>
+                  <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                    CMTS AWBSECTION82 — what is physically in the shed under this case, recorded on
+                    the statutory record in its own right rather than read off the AWB
+                  </p>
+                </div>
+                <div className="p-5 flex flex-col gap-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-4">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[9px] font-mono text-[#CBD5E1]">PCS</span>
+                      <span className="text-[13px] font-medium font-mono text-[#0F172A]">
+                        {c.PCS}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[9px] font-mono text-[#CBD5E1]">CARGODATE</span>
+                      <span className="text-[13px] font-medium text-[#0F172A]">
+                        {formatDate(c.CARGODATE)}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-1 col-span-2">
+                      <span className="text-[9px] font-mono text-[#CBD5E1]">CONTENTS</span>
+                      <span className="text-[13px] font-medium text-[#0F172A] break-words">
+                        {c.CONTENTS}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Reconciliation against the AWB total, stated either way —
+                      a match is a fact worth showing, not an absence of one. */}
+                  <p
+                    className="text-[11px] rounded-lg px-3 py-2"
+                    style={{
+                      backgroundColor: c.PCS === c.pieces ? "#F8FAFC" : "#FFFBEB",
+                      color: c.PCS === c.pieces ? "#64748B" : "#92400E",
+                    }}
+                  >
+                    {c.PCS === c.pieces
+                      ? `All ${c.pieces} pieces on the AWB are under the case — nothing was released or seized before it opened, so an auction lot or disposal certificate covers the whole consignment.`
+                      : `${c.PCS} of the AWB's ${c.pieces} pieces are under the case. The balance left the shed before the case opened; any disposition here covers ${c.PCS} pieces only.`}
+                  </p>
+
+                  <p className="text-[11px] text-[#94A3B8]">
+                    CARGODATE is the legacy cargo date migrated with the record, not a second dwell
+                    clock. The statutory countdown above is driven by the arrival date alone
+                    ({formatDate(c.arrivedAt)}), so no screen re-derives the deadline from this
+                    column and quotes a different one.
+                  </p>
+                </div>
+              </div>
+
               {/* Auto-scheduled statutory notices */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
                 <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
