@@ -412,9 +412,14 @@ export function reconcileVoucher(
     if (r.lines !== null && !r.agrees) {
       breaks.push({
         title: `${r.headerCmts} does not equal Σ ${r.detailCmts}`,
+        // Both the noun and the verb agree with the line count. A voucher
+        // billed against a single zone is the common case, not the exotic one,
+        // so "the 1 detail line add up to" is the string that renders most
+        // often — and a reconciliation notice that reads as broken English
+        // undercuts the figure it is reporting.
         detail: `The header carries ${formatExact(r.header)}; the ${lines.length} detail line${
-          lines.length === 1 ? "" : "s"
-        } add up to ${formatExact(r.lines)}. A roll-up that cannot be reached from its own grid cannot be reconciled against the legacy voucher.`,
+          lines.length === 1 ? " adds" : "s add"
+        } up to ${formatExact(r.lines)}. A roll-up that cannot be reached from its own grid cannot be reconciled against the legacy voucher.`,
         delta: r.delta,
       });
     }

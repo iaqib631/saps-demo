@@ -543,12 +543,20 @@ export const FLOWS: FlowDef[] = [
     docNo: "SAPS-ACMS-FC-02-02",
     rev: "Rev 2.0",
     amendment:
-      "Documentation intake is OCR-assisted: scan MAWB / HAWB → per-item extract (item, category, qty, vol, wt) with confidence → operator accepts or corrects each item before the AWB summary sheet, MAWB/HAWB verification and indexation. Declared (OCR) vs physical count from the terminal lane raises a CDR (FC-04). Cargo classification (class / subclass) is set at Indexation, not later. OCR is limited to the two scan points — inbound MAWB/HAWB here, and the receiver's documents at collection; every other capture on this flow is a keyed form.",
+      "Documentation intake is OCR-assisted: scan MAWB / HAWB → per-item extract (item, category, qty, vol, wt) with confidence → operator accepts or corrects each item before the AWB summary sheet, MAWB/HAWB verification and indexation. Declared (OCR) vs physical count from the terminal lane raises a CDR (FC-04). Cargo classification (class / subclass) is set at Indexation, not later. OCR is limited to the two scan points — inbound MAWB/HAWB here, and the receiver's documents at collection; every other capture on this flow is a keyed form. Ordering pass: two earlier moves were made without renumbering, so the walkthrough printed its badges 17 → 30 → 30a → 18 → 19 and 33a → 36 → 34 — a flow reading backwards on screen. The moves themselves stand. A7 keeps the NOA and the NFD above the customs lane, because the CHA is only brought into the shipment by the NOA, and gate-out keeps its place above the collection it authorises. The numbers now follow the connectors: contiguous 00–35, with lettered sub-steps (06a–06d, 18a, 33a, 35a) kept against the numbered parent they are subordinate to. The two gate-out nodes are merged at §34 — “Cargo released after DO” in the terminal lane and “Cargo collected” in the consignee lane were one physical gate event drawn once per lane, both pointing at /dispatch/gate-out, and FC-08 §11 and FC-01 §24 each model it as a single node.",
     // Ordered by the diagram's connectors, not lane by lane — FC-02 crosses
     // lanes seven times and reading it lane-first misstates the sequence.
-    // The terminal's physical track (15–18) and the documentation track
-    // (11–14) both hang off "Manifest checked" and run concurrently; they
-    // rejoin where the warehoused location is captured against the AWB.
+    // The documentation track (07–10) and the terminal's physical track
+    // (11–14) both hang off §06 "Manifest checked" and run concurrently; they
+    // rejoin at §15, where the warehoused location is captured against the AWB.
+    // (This comment read "(15–18)" and "(11–14)" for those two tracks and
+    // matched no numbering this file has ever held; it is corrected here.)
+    //
+    // Array order below IS ref order, and both are the reading order:
+    // app/flows/[flowId]/page.tsx walks this array and prints each ref badge
+    // in sequence. A ref that jumps backwards is a defect, not a variation —
+    // if a step has to move, it is renumbered in the same pass, and every
+    // citation of its old number is repaired with it.
     steps: [
       /*
        * §00 is upstream of the flight itself: the forwarding agent's digital
@@ -556,6 +564,14 @@ export const FLOWS: FlowDef[] = [
        * §01 notifies that arrival. It is the electronic alternative to the
        * pouch §06a scans, and its piece matrix is the declared count that §11
        * physically counts against.
+       *
+       * It keeps ref 00 through the renumber. The flow proper opens at §01,
+       * the flight arrival notification every consignment produces; this node
+       * is the optional pre-lodgement, and a shipment that arrives on paper
+       * never touches it. Numbering it 01 would push the whole spine down by
+       * one and would assert that FC-02 begins with a digital pre-lodgement it
+       * does not require. 00 ascends into 01, so array order still equals ref
+       * order — which is the only property the renumber had to restore.
        */
       { lane: "Consignee / CHA", ref: "00", label: "AWB pre-lodged digitally by the forwarding agent — MAWB / HAWB, flight & routing, piece matrix, documents, payment intent", href: "/forwarding-agent/awb-entry-digital", module: "M03", note: "Five-section wizard with per-step validation, ending in “Submit to SAPS”. Optional path — a shipment that arrives on paper joins the flow at §01 and is captured by OCR at §06a instead." },
 
@@ -584,48 +600,81 @@ export const FLOWS: FlowDef[] = [
 
       { lane: "Documentation", ref: "15", label: "Storage location captured", href: "/storage/allocation", module: "M05" },
       { lane: "Documentation", ref: "16", label: "Status updated", href: "/awb/1", module: "M03" },
-      { lane: "Documentation", ref: "17", label: "Messages triggered — RCF on warehousing", href: "/messaging/iata", module: "M07", note: "A7 — RCF fires here. NFD no longer fires off the racking event; it follows the NOA at §30a. NOA to the consignee is §30, not §22, and §30 is drawn immediately below this node rather than after the finance lane." },
+      { lane: "Documentation", ref: "17", label: "Messages triggered — RCF on warehousing", href: "/messaging/iata", module: "M07", note: "A7 — RCF fires here. NFD no longer fires off the racking event; it follows the NOA at §18a. NOA to the consignee is §18, and it is drawn immediately below this node rather than after the finance lane." },
 
       /*
-       * §30 / §30a moved up from below §29. §18 GD filing is the CHA's act, and
-       * the CHA is only brought into the shipment by the NOA — FC-06 states the
+       * §18 / §18a sit here, above the customs lane, and not down in the
+       * consignee lane after payment. §19 GD filing is the CHA's act, and the
+       * CHA is only brought into the shipment by the NOA — FC-06 states the
        * order outright (§01 NOA → §02 CHA collects documents → §03 SD filed) and
-       * FC-01 does too. Drawn after §29 the consignee was paying at §29 for a
-       * shipment it was first told about at §30. §30a travels with §30 because
-       * A7 wires NFD to the NOA's own issue event (warehoused → NOA → NFD).
+       * FC-01 does too. Drawn after payment, the consignee was paying at §30 for
+       * a shipment it was first told about afterwards. §18a travels with §18
+       * because A7 wires NFD to the NOA's own issue event (warehoused → NOA →
+       * NFD), which is the relationship the letter suffix records.
+       *
+       * These two carried refs 30 / 30a until this pass: the move was made
+       * without renumbering, and it is what made the walkthrough print
+       * 17, 30, 30a, 18, 19.
+       *
+       * One citation could not be carried across. §17's note read "NOA to the
+       * consignee is §30, not §22". Under every numbering this file has held,
+       * §22 is a customs-lane node — OOC issued, now §23 — and never a
+       * candidate for the NOA, so the "not §22" half names a step that cannot
+       * be resolved to anything it plausibly meant. It is dropped rather than
+       * remapped onto a node it may never have referred to; the positional
+       * claim it was making survives in the note, which now says the NOA is
+       * drawn immediately below §17.
        */
-      { lane: "Consignee / CHA", ref: "30", label: "NOA received", href: "/consignee/notice-of-arrival", module: "M08", note: "The receipt surface, not the issue surface: notice status Unread / Read / Action Required / Resolved, free-period expiry countdown, documents-required list and a recommended action. /import/arrival-advice is the terminal issuing it — FC-05 §03 and FC-06 §01." },
-      { lane: "Consignee / CHA", ref: "30a", label: "NFD — Notified for Delivery sent (fires after the NOA)", href: "/messaging/iata", module: "M07", note: "A7 — moved off the cargo-warehoused trigger. TRIGGER_MAP in lib/domain/messaging.ts owns the wiring." },
+      { lane: "Consignee / CHA", ref: "18", label: "NOA received", href: "/consignee/notice-of-arrival", module: "M08", note: "The receipt surface, not the issue surface: notice status Unread / Read / Action Required / Resolved, free-period expiry countdown, documents-required list and a recommended action. /import/arrival-advice is the terminal issuing it — FC-05 §03 and FC-06 §01." },
+      { lane: "Consignee / CHA", ref: "18a", label: "NFD — Notified for Delivery sent (fires after the NOA)", href: "/messaging/iata", module: "M07", note: "A7 — moved off the cargo-warehoused trigger. TRIGGER_MAP in lib/domain/messaging.ts owns the wiring." },
 
-      { lane: "Customs / Agencies", ref: "18", label: "GD filed in PSW / WeBOC", href: "/customs/filing", module: "M09", note: "SD replaces GD; PSW primary, WeBOC parallel-run. Reached from §30 — the CHA files against the NOA it has just received." },
-      { lane: "Customs / Agencies", ref: "19", label: "Customs channel assigned", href: "/customs/channels", module: "M09" },
-      { lane: "Customs / Agencies", ref: "20", label: "Risk channel — Green / Yellow / Red?", href: "/customs/channels", module: "M09", decision: true, note: "A8 — the third channel is Red (physical examination + sampling). “Normal” is retired. Yellow and Red were absent from this lane entirely; all three edges now exist." },
-      { lane: "Customs / Agencies", ref: "21", label: "ANF / ASF clearance if required", href: "/customs/channels", module: "M09" },
-      { lane: "Customs / Agencies", ref: "22", label: "OOC issued", href: "/customs/channels", module: "M09", note: "Fetched from PSW, or keyed from the print when the gateway is down, then verified field-by-field against the SD." },
+      { lane: "Customs / Agencies", ref: "19", label: "GD filed in PSW / WeBOC", href: "/customs/filing", module: "M09", note: "SD replaces GD; PSW primary, WeBOC parallel-run. Reached from §18 — the CHA files against the NOA it has just received." },
+      { lane: "Customs / Agencies", ref: "20", label: "Customs channel assigned", href: "/customs/channels", module: "M09" },
+      { lane: "Customs / Agencies", ref: "21", label: "Risk channel — Green / Yellow / Red?", href: "/customs/channels", module: "M09", decision: true, note: "A8 — the third channel is Red (physical examination + sampling). “Normal” is retired. Yellow and Red were absent from this lane entirely; all three edges now exist." },
+      { lane: "Customs / Agencies", ref: "22", label: "ANF / ASF clearance if required", href: "/customs/channels", module: "M09" },
+      { lane: "Customs / Agencies", ref: "23", label: "OOC issued", href: "/customs/channels", module: "M09", note: "Fetched from PSW, or keyed from the print when the gateway is down, then verified field-by-field against the SD." },
 
-      { lane: "Finance / Billing", ref: "23", label: "Storage clock reads the intake timestamp (§04 receipt / §11 count)", href: "/billing/godown-rent", module: "M11", note: "A3 — the clock STARTS at intake. Finance reads that timestamp; it does not set it. The board's “general & pharma only” annotation is a free-period rule, not a clock rule: the clock runs for every class, and the class decides how many free days precede the chargeable period at §24." },
-      { lane: "Finance / Billing", ref: "24", label: "Free / grace period applied → chargeable days = dwell − free", href: "/billing/calculator", module: "M10", note: "A3 — free period follows the clock start. chargeableDays = max(0, totalDays − freeDays) + supplementDays, calculateCharges() in lib/domain/finance.ts." },
-      { lane: "Finance / Billing", ref: "25", label: "Chargeable weight calculated", href: "/billing/calculator", module: "M10" },
-      { lane: "Finance / Billing", ref: "26", label: "Tariff applied", href: "/billing/calculator", module: "M10", note: "The tariff master IS versioned — /finance-manager/tariff-master-editor carries TariffVersion with effectiveFrom / effectiveTo, status, createdBy and approvedBy, and the calculator stores tariffVersion on the calculation rather than looking it up at render, so a rate change cannot restate historic invoices. The version in force is resolved at FC-07 §07a. This note previously asserted the opposite; it was stale." },
-      { lane: "Finance / Billing", ref: "27", label: "Invoice generated", href: "/billing/invoice", module: "M10" },
-      { lane: "Finance / Billing", ref: "28", label: "Adjustment / waiver if required", href: "/billing/invoice", module: "M10", note: "Role & rights restricted, per the flow's own annotation." },
-      { lane: "Finance / Billing", ref: "29", label: "Payment received", href: "/billing/invoice", module: "M10" },
+      { lane: "Finance / Billing", ref: "24", label: "Storage clock reads the intake timestamp (§04 receipt / §11 count)", href: "/billing/godown-rent", module: "M11", note: "A3 — the clock STARTS at intake. Finance reads that timestamp; it does not set it. The board's “general & pharma only” annotation is a free-period rule, not a clock rule: the clock runs for every class, and the class decides how many free days precede the chargeable period at §25." },
+      { lane: "Finance / Billing", ref: "25", label: "Free / grace period applied → chargeable days = dwell − free", href: "/billing/calculator", module: "M10", note: "A3 — free period follows the clock start. chargeableDays = max(0, totalDays − freeDays) + supplementDays, calculateCharges() in lib/domain/finance.ts." },
+      { lane: "Finance / Billing", ref: "26", label: "Chargeable weight calculated", href: "/billing/calculator", module: "M10" },
+      { lane: "Finance / Billing", ref: "27", label: "Tariff applied", href: "/billing/calculator", module: "M10", note: "The tariff master IS versioned — /finance-manager/tariff-master-editor carries TariffVersion with effectiveFrom / effectiveTo, status, createdBy and approvedBy, and the calculator stores tariffVersion on the calculation rather than looking it up at render, so a rate change cannot restate historic invoices. The version in force is resolved at FC-07 §07a. This note previously asserted the opposite; it was stale." },
+      { lane: "Finance / Billing", ref: "28", label: "Invoice generated", href: "/billing/invoice", module: "M10" },
+      { lane: "Finance / Billing", ref: "29", label: "Adjustment / waiver if required", href: "/billing/invoice", module: "M10", note: "Role & rights restricted, per the flow's own annotation." },
+      { lane: "Finance / Billing", ref: "30", label: "Payment received", href: "/billing/invoice", module: "M10" },
 
       { lane: "Consignee / CHA", ref: "31", label: "Documents submitted", href: "/gate-entry/authority-letter-digitisation", module: "M13", note: "Scan point 2 of 2 — the receiver's documents are scanned and OCR'd at collection." },
-      { lane: "Consignee / CHA", ref: "32", label: "Charges paid", href: "/consignee/pay-do", module: "M10", note: "The consignee's own gateway journey — “Payment initiated. Redirecting to gateway…” → Payment Successful / Payment Failed with a transaction reference. /billing/invoice is the terminal's ledger view of the same event at §29." },
+      { lane: "Consignee / CHA", ref: "32", label: "Charges paid", href: "/consignee/pay-do", module: "M10", note: "The consignee's own gateway journey — “Payment initiated. Redirecting to gateway…” → Payment Successful / Payment Failed with a transaction reference. /billing/invoice is the terminal's ledger view of the same event at §30." },
       { lane: "Consignee / CHA", ref: "33", label: "DO collected", href: "/cha/do-collection", module: "M12", note: "Re-pointed at the collecting party's own queue — DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected. /billing/delivery-order is the terminal issuing the DO." },
       { lane: "Consignee / CHA", ref: "33a", label: "Pickup slot booked — eligibility checked (OOC · charges · DO issued · no hold), driver and vehicle nominated", href: "/consignee/schedule-pickup", module: "M12", note: "The join into FC-13 §06: the booking runs on the planner's slot grid, so a slot the planner has blocked is refused here. The forwarding agent books the same slot from /forwarding-agent/pickup-scheduling — one action, two surfaces, not two steps." },
 
       /*
-       * §36 moved up from the end of the flow to sit between §33 and §34. It is
-       * gate-out — the terminal authorising the cargo to leave — so it has to
-       * precede the collection it authorises and the POD signed at handover.
-       * FC-08 orders the same three events §11 gate-out → §12 POD → §14
-       * delivered, and FC-01 runs §24 dispatch → §25–26 POD.
+       * §34 is the merge of the two gate-out nodes that used to sit here as
+       * refs 36 and 34 — "Cargo released after DO" in the terminal lane and
+       * "Cargo collected" in the consignee lane. They were adjacent, both
+       * hrefed /dispatch/gate-out, and they are one physical event: the truck
+       * at the exit, the tag read against the gate pass and the DO, and the
+       * cargo leaving. The swimlane board draws it once per lane because two
+       * parties are standing at the same gate, not because two things happen.
+       *
+       * Decided from the code, not the drawing. GATE_OUT_CHECKS is one
+       * GateOutCheck per gate pass (lib/domain/fixtures.ts) carrying a single
+       * outcome, cleared or blocked (lib/domain/dispatch.ts:287), and
+       * /dispatch/gate-out is the one screen over it — there is no second
+       * record a "collected" node could be
+       * about, and no consignee-side screen for it either: the consignee's own
+       * surfaces around this point are §33a scheduling and §35a POD retrieval.
+       * FC-08 models the same event as the single node §11, FC-01 as the
+       * single node §24. The released-after-DO label and note survive because
+       * they name the control the screen implements; "Cargo collected" carried
+       * no note, no decision and no distinct href. The consignee-lane
+       * touchpoint is not lost — it is named in the label, on the terminal
+       * lane, because the screen and the record belong to the terminal.
+       *
+       * It also has to precede the POD signed at handover: FC-08 orders the
+       * three events §11 gate-out → §12 POD → §14 delivered, and FC-01 runs
+       * §24 dispatch → §25–26 POD.
        */
-      { lane: "Cargo Terminal / Warehouse", ref: "36", label: "Cargo released after DO", href: "/dispatch/gate-out", module: "M13", note: "Gate-out matches the RFID tag to the gate pass + DO and auto-checks OOC, charges paid and no-hold." },
-
-      { lane: "Consignee / CHA", ref: "34", label: "Cargo collected", href: "/dispatch/gate-out", module: "M13" },
+      { lane: "Cargo Terminal / Warehouse", ref: "34", label: "Cargo released after DO and collected — the gate-out event", href: "/dispatch/gate-out", module: "M13", note: "Gate-out matches the RFID tag to the gate pass + DO and auto-checks OOC, charges paid and no-hold. The board's consignee-lane “Cargo collected” node is this same event seen from the other side of the gate and is merged in here — one GateOutCheck row, not two. FC-08 §11 and FC-01 §24 each draw it as a single node." },
       { lane: "Consignee / CHA", ref: "35", label: "POD signed", href: "/dispatch/closure", module: "M14" },
       { lane: "Consignee / CHA", ref: "35a", label: "POD retrieved by the consignee; delivery dispute raised against the signed POD", href: "/consignee/pod-history", module: "M14", note: "The dispute is the step that exists nowhere else — reason, 500-character description, evidence upload and an evidence bundle download. FC-08's closure has no post-delivery challenge path without it." },
     ],
@@ -803,7 +852,7 @@ export const FLOWS: FlowDef[] = [
       "Charges auto-computed from a versioned Tariff Master. Payment is cash-less via gateway, auto-reconciled. Waiver runs role-based multi-level approval + audit → credit note. A3: the storage clock starts at INTAKE, not at flight arrival and not in the finance lane; the free/grace period runs from the clock start; the chargeable period is dwell − free. The steps are ordered that way — §01 arrival, §02 clock start, §03 free period, §03a chargeable period — because the old combined node stated the free period before the clock had started. A11: the five release conditions are an AND gate, not the fan-out the board draws — all five (where applicable) must pass. A10: this flow ends at the godown-rent voucher; DO issuance is FC-01 §22b / M12.",
     steps: [
       { ref: "01", label: "Flight arrival time recorded — provenance only, never priced", href: "/awb/1", module: "M04", note: "A3 — the gap between the aircraft landing and the cargo being accepted is the handler's, and is never billed to the consignee. Code field: ChargeCalculation.arrivalAt." },
-      { ref: "02", label: "Storage clock starts at cargo intake", href: "/awb/1?tab=charges", module: "M10", note: "A3 — clock first. The anchor is the AWB's intakeAt, surfaced as ChargeCalculation.clockStartedAt; FC-02 §23 says the same thing, so the two flows now agree." },
+      { ref: "02", label: "Storage clock starts at cargo intake", href: "/awb/1?tab=charges", module: "M10", note: "A3 — clock first. The anchor is the AWB's intakeAt, surfaced as ChargeCalculation.clockStartedAt; FC-02 §24 says the same thing, so the two flows now agree." },
       { ref: "03", label: "Free / grace period runs from the clock start — nothing accrues in it", href: "/awb/1?tab=charges", module: "M10", note: "A3 — free period second, and derived from the cargo class rather than typed. Code field: ChargeCalculation.freeDays." },
       { ref: "03a", label: "Chargeable period = dwell − free (+ supplements)", href: "/awb/1?tab=charges", module: "M10", note: "A3 — the only period priced. chargeableDays = max(0, totalDays − freeDays) + supplementDays, calculateCharges() in lib/domain/finance.ts." },
       { ref: "04–06", label: "Actual → volumetric (L×W×H/6000) → chargeable = max()", href: "/awb/3?tab=charges", module: "M10" },
@@ -815,7 +864,7 @@ export const FLOWS: FlowDef[] = [
        * input to the calculation, so it is established above it" — and it was
        * missing from the flow.
        */
-      { ref: "07a", label: "Tariff master version in force resolved — slab table, free days, minimum charge, effective dates", href: "/finance-manager/tariff-master-editor", module: "M10", note: "TariffVersion carries effectiveFrom / effectiveTo, status, createdBy and approvedBy, with an audit drawer behind it; the resolved version is stored on the calculation rather than looked up at render. FC-02 §26 says the same." },
+      { ref: "07a", label: "Tariff master version in force resolved — slab table, free days, minimum charge, effective dates", href: "/finance-manager/tariff-master-editor", module: "M10", note: "TariffVersion carries effectiveFrom / effectiveTo, status, createdBy and approvedBy, with an audit drawer behind it; the resolved version is stored on the calculation rather than looked up at render. FC-02 §27 says the same." },
       { ref: "07b", label: "Negotiated tariff set applied — agent contract × consignee tier × route × class, rate override under approval", href: "/finance-manager/multi-tariff-engine", module: "M10", note: "A negotiated set overrides the master rate for the matching contract, and the override goes out for approval rather than taking effect on save." },
       { ref: "08", label: "Tariff slab applied (D1-3 / D4-7 / D8-14 / D15+)", href: "/awb/3?tab=charges", module: "M10" },
       { ref: "09", label: "Invoice / tax invoice generated", href: "/billing/invoice", module: "M11" },

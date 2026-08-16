@@ -1133,13 +1133,43 @@ export const GODOWN_RENT_DETAILS: GodownRentDetail[] = GODOWN_RENTS.flatMap((g, 
   // allocation is done on paper too.
   const split = (total: number) => splitExact(total, zones.length);
 
+  // One deliberate exception to the paragraph above, on GR-2026-04424
+  // (gi === 4) and nowhere else: a stale MINIMUMCHARGES snapshot, so the
+  // reconciler has a roll-up it cannot reach from its own grid.
+  //
+  // The story is the archetypal CMTS migration fault. `SUMMINIMUMCHARGES` is
+  // re-derived against the live CARGOSUBCLASS row — FRO (subclass 113) now
+  // carries MINCHARGES 7,500 — while the GODOWNRENTDETAIL line still holds
+  // 5,500, the cold-chain floor as it stood on the day the voucher was raised.
+  // Header refreshed from the current rate master, detail rows frozen at
+  // capture time, nothing reconciling the two. It is seeded rather than waited
+  // for because with all eight vouchers arithmetically clean the exception path
+  // never runs, and a screen built to surface migration defects that can never
+  // surface one demonstrates nothing.
+  //
+  // Feeds `reconcileVoucher`'s "SUMMINIMUMCHARGES does not equal Σ
+  // MINIMUMCHARGES" break and, through it, the red break panel at the top of
+  // VoucherChargeBreakdown. This is the ONLY break raised across the eight
+  // vouchers, and it is the only voucher raising it.
+  //
+  // DO NOT "correct" this back to `split(g.sumMinimumCharges)`. It is safe
+  // precisely because MINIMUMCHARGES is a FLOOR and never an addend, and 5,500
+  // sits far below this voucher's 18,540 sub-total, so the floor is dormant on
+  // both figures: TOTALAMOUNT, NETPAYABLE, CASHAMOUNT, PAYORDERAMOUNT and the
+  // invoice built off them are all untouched. A broken roll-up on a dormant
+  // column is a reconciliation exception, not a billing error — which is the
+  // whole reason this column was chosen to carry it. The waiver on i === 1 is
+  // the opposite case and is NOT an anomaly: it demonstrates a waiver applied
+  // correctly and its arithmetic must stay exact.
+  const staleFloorSnapshot = gi === 4 ? 5500 : null;
+
   const weightParts = split(g.CHARGEABLEWEIGHT);
   const withoutTaxParts = split(g.sumTotalAmountWithoutTax);
   const taxParts = split(g.sumTax);
   const handlingParts = split(g.sumHandlingCharges);
   const storageParts = split(g.sumStorgeUnitCharges);
   const locationParts = split(g.sumLocationChargesAmount);
-  const minimumParts = split(g.sumMinimumCharges);
+  const minimumParts = split(staleFloorSnapshot ?? g.sumMinimumCharges);
   const afuParts = split(g.sumAFUAmount);
   const specialParts = split(g.SPECIALHANDLING);
   const deconsolParts = split(g.DECONSOLIDATION);

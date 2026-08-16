@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 
 /* =============================================================================
- * PORTAL-SEPARATED NAVIGATION  ·  fourteen portals, one rail
+ * PORTAL-SEPARATED NAVIGATION  ·  three portals, twenty-five blocks, one rail
  * -----------------------------------------------------------------------------
  * The client requirement is two things at once, and they pull in opposite
  * directions:
@@ -107,7 +107,7 @@ export const PORTALS: Record<PortalId, PortalMeta> = {
   consignee: {
     label: "Consignee Portal",
     audience: "customer",
-    flow: "FC-02 consignee lane · FC-06 · FC-07 §13 · FC-08 §01 · FC-10",
+    flow: "FC-02 consignee lane · FC-05 §17a · FC-06 · FC-07 §12a · FC-08 §01–01c · FC-10",
   },
   superadmin: {
     label: "Superadmin Portal",
@@ -152,9 +152,18 @@ interface NavBlock extends NavLeaf {
  *                     on, the hub an object lives in. MAY point up, and should
  *                     be presented as a reference rather than a next step.
  *
- * `UPWARD_REFERENCES` is the complete set of links that point up the rail. It is
- * exported rather than inlined as prose so the rule is checkable: any link in
+ * `UPWARD_REFERENCES` is the complete set of links that are NOT onward CTAs. It
+ * is exported rather than inlined as prose so the rule is checkable: any link in
  * the app that points up the rail and is NOT in this list is an ordering bug.
+ *
+ * ANOMALY, named rather than hidden: two entries below read DOWN the rail, not
+ * up — `/dispatch/gate-pass` → `/cha/do-collection` and `/warehouse-manager` →
+ * `/exceptions/queue`. Both cross the portal boundary, and the three-portal
+ * grouping (every warehouse block above every consignee block) outranks flow
+ * order across that boundary. They stay listed because what this array actually
+ * whitelists is "drill-back, not next step", which is true of both; each says so
+ * in its own `why`. Fixing the direction would mean interleaving the portals,
+ * which is the one thing the rail may not do.
  * -------------------------------------------------------------------------- */
 export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
   {
@@ -175,17 +184,17 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
   {
     from: "/dispatch/gate-pass",
     to: "/gate-entry/driver-identity-register",
-    why: "FC-08 §03 is a PREREQUISITE of §06. Gate & Yard is deliberately placed above Dispatch so this reads upward into a check already performed.",
+    why: "FC-08 §02 (verify receiver identity / CNIC) is a PREREQUISITE of §04 (generate gate pass). Gate & Yard is deliberately placed above Dispatch so this reads upward into a check already performed.",
   },
   {
     from: "/dispatch/gate-pass",
     to: "/gate-entry/authority-letter-digitisation",
-    why: "FC-08 §04, same prerequisite relationship as §03.",
+    why: "FC-08 §03 (verify authority letter), same prerequisite relationship to §04 as §02.",
   },
   {
     from: "/dispatch/gate-pass",
     to: "/cha/do-collection",
-    why: "FC-08 §01 is the trigger that opened this flow, not its next step. The CHA portal sits above Dispatch for exactly this reason.",
+    why: "FC-08 §01 is the trigger that opened this flow, not its next step. Reads DOWN the rail, not up: the CHA desk belongs to the Consignee portal, which the three-portal grouping puts below every warehouse block. Listed anyway because the property this array whitelists is drill-back-not-CTA, and that holds in either direction.",
   },
   {
     from: "/dispatch/closure",
@@ -195,46 +204,62 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
   {
     from: "/export/buildup",
     to: "/messaging/iata",
-    why: "The IATA console is a cross-cutting spine serving FC-01 §17, FC-04 §08, FC-09 §05 and FC-11 §13. It is held once, upstream, rather than copied into each caller.",
+    why: "The IATA console is a cross-cutting spine serving FC-01 §17, FC-02 §17, FC-04 §08, FC-05 §A1 / §01 / §04, FC-11 §19–20, FC-12 §09, FC-13 §02a and FC-16 §16 — the export caller here is FC-11 §19–20. It is held once, upstream, rather than copied into each caller.",
   },
   {
     from: "/warehouse-manager",
     to: "/exceptions/queue",
-    why: "Cross-portal escalation out of the warehouse into the terminal's aging dashboard. Escalation reads upward by nature.",
+    why: "Escalation out of the warehouse floor into the terminal's cross-branch aging dashboard (FC-10 §aging). Reads DOWN the rail: FC-10 puts the aging dashboard at the END of the exception flow, so Exceptions & CDR sits below Warehouse Floor. Listed because it is a jump into a summary, not the floor's next step.",
   },
   {
     from: "*",
     to: "/awb/[awbId]",
-    why: "The AWB hub is the object every portal drills into — the target of twelve flow steps. It is shared infrastructure, so it sits at the top of Platform and every link into it is a drill-in reference, never an onward CTA.",
+    why: "The AWB hub is the object every portal drills into — the target of nineteen flow steps across FC-02, FC-03, FC-07, FC-08 and FC-09, counting one step per array entry over every /awb/* href and tab. It is shared infrastructure, so it sits at the top of the rail and every link into it is a drill-in reference, never an onward CTA.",
   },
 ];
 
 /* =============================================================================
  * THE RAIL
  * -----------------------------------------------------------------------------
- * Flow order, top to bottom. Portal headings are derived from the `portal`
- * field, so the ordering decisions live here and nowhere else.
+ * Flow order, top to bottom, WITHIN each portal. Portal headings are derived
+ * from the `portal` field, so the ordering decisions live here and nowhere else.
  *
- * Portal sequence and why:
- *   Platform            the shell: home, the AWB hub every portal drills into,
- *                       the architecture views, and the auth states.
- *   Terminal Operations FC-01 spine, run 1: import → storage → messaging → customs.
- *   Finance             FC-07 §20–22 of the spine: charges → invoice → DO. Sits
- *                       between customs and dispatch because the DO is what the
- *                       gate pass is issued against.
+ * The three-portal grouping is the outer constraint and it outranks flow order:
+ * every warehouse block runs before every consignee block, and both before
+ * superadmin, because the rail must read as three unbroken headed runs. Flow
+ * order is therefore satisfied inside a run, not across the boundary — which is
+ * why the CHA desk holding FC-08 §01, the trigger for the gate pass, sits BELOW
+ * Dispatch. `UPWARD_REFERENCES` names the two links that cross the wrong way.
+ *
+ * Block sequence and why, in the order they appear below:
+ *   AWB Hub             shared infrastructure: the object every portal drills
+ *                       into, the target of nineteen flow steps.
+ *   Planning            FC-13: forecast → capacity → slots → roster.
+ *   Import Documentation FC-01 spine, run 1: §01–04 through §13–14.
+ *   Storage & Allocation the location model, then FC-01 §10 tagging and §15–16.
+ *   Warehouse Floor     physical execution of the allocation and the pick.
+ *   Lifter Fleet        FC-15, field execution of the move and the tag binding.
+ *   Messaging & Alerts  FC-01 §17–18 and the FC-05 dispatch tail.
+ *   ULD Messaging       M24 / FC-16, the second messaging track beside M07.
+ *   Customs Clearance   FC-06, filing → gateway → channels → OOC.
+ *   Tariff & Charges    FC-07 §07a–§07b, the rate card the calculation reads.
+ *   Invoice & Release   FC-07's tail plus FC-01 §20–22: charges → invoice → DO.
+ *                       Sits between customs and dispatch because the DO is what
+ *                       the gate pass is issued against.
+ *   Gate & Yard         FC-08 §01d–§03 — the vehicle is admitted and identity and
+ *                       the authority letter are verified BEFORE §04 issues the
+ *                       gate pass, so this block is placed above Dispatch.
+ *   Dispatch & Closure  run 2: gate pass → gate-out → closure.
+ *   Exceptions & CDR    FC-04 and FC-10, with the aging dashboard last.
+ *   Transhipment        FC-09.
+ *   Export              FC-11.
+ *   Supervision         FC-14: hand over, watch the floor, escalate, measure it.
+ *   — consignee portal —
  *   Customer Portal     the consignee receives the NOA, pays, collects the DO.
- *   CHA Portal          the broker files the GD, pays, collects the DO (FC-08 §01).
- *   Forwarding Agent    the forwarder registers the driver and vehicle that will
- *                       present at the gate (FC-08 §01–04).
- *   Gate & Yard         FC-08 §02–04 — identity and authority letter are verified
- *                       BEFORE §06 issues the gate pass, so this portal is placed
- *                       between the customs block and the dispatch block.
- *   Terminal Operations run 2: dispatch → exceptions → transhipment → export.
- *   Warehouse           physical execution of the allocation and the pick.
- *   Equipment           field execution of the tag binding.
- *   ULD Management      M07's other half; the IATA console links down into it.
- *   Planning            forecast → capacity → slots → roster.
- *   Supervision         watch the floor, measure it, escalate, hand over.
+ *   CHA Portal          the broker files the SD, pays, collects the DO (FC-08 §01).
+ *   Forwarding Agent    the forwarder pre-registers the driver and vehicle that
+ *                       will present at the gate (FC-08 §01a–§01c).
+ *   — superadmin portal —
  *   Administration      the write side of configuration and RBAC.
  *   Integrations        the gateway estate. Placed directly below Administration
  *                       because FC-12's lanes run Sites & HQ → Access & RBAC →
@@ -256,9 +281,11 @@ const HOME: NavLeaf & { icon: React.ComponentType<{ size?: number; strokeWidth?:
 const RAIL: NavBlock[] = [
   {
     // Had NO sidebar entry at all before this rewrite, despite being the declared
-    // target of twelve flow steps across FC-02, FC-07, FC-08 and FC-09. It was
-    // reachable only by accident, through in-page deep links. `/awb/1` is the
-    // demo's first fixture AWB; `matchPrefix` keeps the entry lit for any id.
+    // target of nineteen flow steps across FC-02, FC-03, FC-07, FC-08 and FC-09
+    // (one step per array entry, over every /awb/* href and tab in lib/architecture.ts;
+    // the old note said "twelve … FC-02, FC-07, FC-08, FC-09" and undercounted).
+    // It was reachable only by accident, through in-page deep links. `/awb/1` is
+    // the demo's first fixture AWB; `matchPrefix` keeps the entry lit for any id.
     portal: "warehouse",
     label: "AWB Hub — M03",
     icon: Package,
@@ -271,11 +298,19 @@ const RAIL: NavBlock[] = [
     icon: Calendar,
     href: "/planner",
     subItems: [
-      { label: "Planning Home", href: "/planner" }, //                                §00
-      { label: "Demand Forecast", href: "/planner/demand-forecast" }, //              §01 / M01
-      { label: "Capacity Dashboard", href: "/planner/capacity-dashboard" }, //        §02
-      { label: "Slot Planner", href: "/planner/slot-planner" }, //                    §03
-      { label: "Resource Roster", href: "/planner/resource-roster" }, //              §04
+      // Re-derived against FC-13. The old 00/01/02/03/04 tokens were the entries'
+      // own positions in this list, not flow steps — FC-13 numbers these screens
+      // §01–§13 and has no step 00 at all.
+      //
+      // ANOMALY, named: Planning Home is FC-13 §11, the LAST planner node — the
+      // published shift plan is the output of the forecast, capacity and slot work
+      // below it. It is kept first anyway because every block in this rail leads
+      // with its section home, and that consistency is worth one backwards ref.
+      { label: "Planning Home", href: "/planner" }, //                                section home · FC-13 §11
+      { label: "Demand Forecast", href: "/planner/demand-forecast" }, //              FC-13 §01–03
+      { label: "Capacity Dashboard", href: "/planner/capacity-dashboard" }, //        FC-13 §04–05 / §13
+      { label: "Slot Planner", href: "/planner/slot-planner" }, //                    FC-13 §06–07
+      { label: "Resource Roster", href: "/planner/resource-roster" }, //              FC-13 §08–09
     ],
   },
   {
@@ -314,14 +349,20 @@ const RAIL: NavBlock[] = [
       // `/storage/locations` is touched by any flow step — they are the location
       // model you configure before allocating against it — and splitting them
       // around the operational pair is what made this block read as scrambled.
-      { label: "Cargo & Location Master", href: "/storage/master" }, //              FC-03 §01 (reference)
-      { label: "Logical vs Physical", href: "/storage/locations" }, //               FC-03 §04 (reference)
-      // Tag binding above allocation. FC-01 tags pieces at §10, five steps before
-      // storage allocation at §15–16: a piece carries its tag out of indexing and
-      // only later acquires a location. The screen is re-entered for the
-      // tag → location write-back (FC-03 §05, FC-15 §08a), but first entry governs.
-      { label: "Tag Binding (RFID)", href: "/storage/rfid-binding" }, //             §10 / FC-03 §05
-      { label: "Allocation Engine", href: "/storage/allocation" }, //                §15–16
+      //
+      // Their trailing annotations used to read "FC-03 01" and "FC-03 04", which
+      // contradicted the sentence above and were invented besides: FC-03's refs
+      // are —, —, —, —, A, B, B-COL, C, — and it has no step 01 or 04 at all.
+      { label: "Cargo & Location Master", href: "/storage/master" }, //              reference data — no flow step
+      { label: "Logical vs Physical", href: "/storage/locations" }, //               reference data — no flow step
+      // Tag binding above allocation. FC-01 tags pieces at §10 and allocates
+      // storage at §15–16: a piece carries its tag out of indexing and only later
+      // acquires a location. The screen is re-entered for the tag → location
+      // write-back at FC-15 §08a, but first entry governs. (The old "FC-03 05"
+      // here was invented too — FC-03's bind step is unnumbered and hrefs
+      // /lifter-operator/rfid-scan, not this screen.)
+      { label: "Tag Binding (RFID)", href: "/storage/rfid-binding" }, //             FC-01 §10 / FC-15 §08a
+      { label: "Allocation Engine", href: "/storage/allocation" }, //                FC-01 §15–16 / FC-02 §14–15 / FC-05 §02
       { label: "Bonded Area", href: "/storage/bonded" }, //                          FC-09 §04
     ],
   },
@@ -331,12 +372,15 @@ const RAIL: NavBlock[] = [
     icon: Warehouse,
     href: "/warehouse-manager",
     subItems: [
-      { label: "Warehouse Dashboard", href: "/warehouse-manager" }, //                FC-03 §00
-      { label: "AWB Register", href: "/warehouse-manager/awb-detail" }, //             FC-02 §10 / M03
-      { label: "Putaway", href: "/warehouse-manager/putaway" }, //                     FC-03 §03
-      { label: "Storage Map", href: "/warehouse-manager/storage-map" }, //             FC-03 §04 / §A
-      { label: "Cold Chain Console", href: "/warehouse-manager/cold-chain" }, //       FC-03 §B
-      { label: "Picking", href: "/warehouse-manager/picking" }, //                     FC-08 §07–10
+      // Re-derived against FC-03, which numbers almost none of these: its refs are
+      // —, —, —, —, A, B, B-COL, C, —. The old 00 / 03 / 04 tokens were list
+      // positions, and §B was the storage-map ref pinned on the cold-chain screen.
+      { label: "Warehouse Dashboard", href: "/warehouse-manager" }, //                section home — no flow step
+      { label: "AWB Register", href: "/warehouse-manager/awb-detail" }, //             M03 — no flow step; the record is created at FC-02 §10 (/awb/1)
+      { label: "Putaway", href: "/warehouse-manager/putaway" }, //                     FC-03 (unnumbered) — "system suggests rack / bin"
+      { label: "Storage Map", href: "/warehouse-manager/storage-map" }, //             FC-03 §A / §B (+ the unnumbered validity check) · FC-13 §05a
+      { label: "Cold Chain Console", href: "/warehouse-manager/cold-chain" }, //       FC-03 §B-COL
+      { label: "Picking", href: "/warehouse-manager/picking" }, //                     FC-08 §05–09 · FC-04 handover entry (unnumbered)
     ],
   },
   {
@@ -345,16 +389,20 @@ const RAIL: NavBlock[] = [
     icon: Forklift,
     href: "/lifter-operator",
     subItems: [
-      { label: "Lifter Home", href: "/lifter-operator" }, //                          §00
+      { label: "Lifter Home", href: "/lifter-operator" }, //                          section home — no flow step
+      // THE GATING RULE (applied identically in Operations Supervision below).
+      // A screen that every screen beneath it depends on having already happened
+      // is placed FIRST, at its §01, whatever else it is also touched by later.
       // Lifter Status was LAST and is FC-15 §01–02b. It is where the operator signs
       // on to a named asset and where fit-for-duty is decided — battery above the
       // 30% threshold, no Out-of-service fault — and the queue will not dispatch to
       // an unfit asset. It gates every screen below it, so it cannot sit beneath them.
-      { label: "Lifter Status", href: "/lifter-operator/lifter-status" }, //          §01–02b
-      { label: "My Tasks", href: "/lifter-operator/tasks" }, //                       §03
-      { label: "Task Detail", href: "/lifter-operator/task-detail" }, //              §04 / §06–09
-      { label: "RFID Scan", href: "/lifter-operator/rfid-scan" }, //                  §05 / FC-03 §05
-      { label: "Movement Log", href: "/lifter-operator/movement-log" }, //            §10–11
+      // FC-15 §14 re-enters the same fleet at the shift handover; first entry governs.
+      { label: "Lifter Status", href: "/lifter-operator/lifter-status" }, //          FC-15 §01–02b
+      { label: "My Tasks", href: "/lifter-operator/tasks" }, //                       FC-15 §03
+      { label: "Task Detail", href: "/lifter-operator/task-detail" }, //              FC-15 §04 / §06–09
+      { label: "RFID Scan", href: "/lifter-operator/rfid-scan" }, //                  FC-15 §05 · FC-03 bind step (unnumbered)
+      { label: "Movement Log", href: "/lifter-operator/movement-log" }, //            FC-15 §10–11 · FC-14 §06d
     ],
   },
   {
@@ -363,7 +411,7 @@ const RAIL: NavBlock[] = [
     icon: Send,
     href: "/messaging/iata",
     subItems: [
-      { label: "IATA Cargo-IMP — M07", href: "/messaging/iata" }, //                 §17
+      { label: "IATA Cargo-IMP — M07", href: "/messaging/iata" }, //                 FC-01 §17 · FC-05 §A1 / §01 / §04
       // NOA directly beneath the IMP console, not at the foot of the block. The
       // previous note here had it backwards: it argued the NOA must sit below the
       // notification engine because the engine links onward to it, but FC-05 runs
@@ -371,9 +419,15 @@ const RAIL: NavBlock[] = [
       // The engine is that flow's TAIL — the NOA is issued and the engine then
       // dispatches it — and FC-01 makes the pairing explicit: §17 IATA messaging,
       // then §18 Notice of Arrival, spine-adjacent.
-      { label: "Arrival Advice / NOA", href: "/import/arrival-advice" }, //          §18 / FC-05 §03 / FC-06 §01
-      { label: "Customs Messaging Console", href: "/messaging/customs" }, //         FC-05
-      { label: "Notification Engine — M08", href: "/messaging/notifications" }, //   FC-05 §16–17
+      { label: "Arrival Advice / NOA", href: "/import/arrival-advice" }, //          FC-01 §18 / FC-05 §03 / FC-06 §01
+      // Notification Engine above the Customs Messaging Console, which is the
+      // reverse of how these two sat. The console was annotated "FC-05" with no
+      // step, which hid the ordering: it is FC-05 §18, the carrier-side half of
+      // "failures surfaced for retry", and the engine is §T (the trigger bus) plus
+      // §16–17, the channel/template resolution and the dispatch that §18 triages
+      // the failures of. §18 cannot precede §16–17.
+      { label: "Notification Engine — M08", href: "/messaging/notifications" }, //   FC-05 §T / §16–17 · FC-04 §06–07
+      { label: "Customs Messaging Console", href: "/messaging/customs" }, //         FC-05 §18
     ],
   },
   {
@@ -382,13 +436,18 @@ const RAIL: NavBlock[] = [
     icon: Container,
     href: "/uld-message-builder",
     subItems: [
-      { label: "ULD Dashboard", href: "/uld-message-builder" }, //                    §00
-      { label: "Import ULDs", href: "/uld-message-builder/import-ulds" }, //          §01
-      { label: "UCM — ULD Control Message", href: "/uld-message-builder/ucm" }, //     §02
-      { label: "SCM — Stock Check Message", href: "/uld-message-builder/scm" }, //     §03
-      { label: "LUC Message Builder", href: "/uld-message-builder/luc" }, //          §04
-      { label: "Message Log", href: "/uld-message-builder/message-log" }, //          §05
-      { label: "Search ULD Messages", href: "/uld-message-builder/search" }, //       §06
+      // Re-derived against FC-16. The old 00–06 tokens were list positions: FC-16
+      // runs §01–§17 and its §01 is /import/flights, not a screen in this block.
+      // The two registers at the foot are cross-cutting rather than out of order —
+      // the log holds §08 (send failed?) as well as §15, and search holds §14; both
+      // are entered from the three builders above rather than run after them.
+      { label: "ULD Dashboard", href: "/uld-message-builder" }, //                    section home — no flow step
+      { label: "Import ULDs", href: "/uld-message-builder/import-ulds" }, //          FC-16 §02–03a
+      { label: "UCM — ULD Control Message", href: "/uld-message-builder/ucm" }, //     FC-16 §04–07 / §09
+      { label: "SCM — Stock Check Message", href: "/uld-message-builder/scm" }, //     FC-16 §10–12
+      { label: "LUC Message Builder", href: "/uld-message-builder/luc" }, //          FC-16 §13
+      { label: "Message Log", href: "/uld-message-builder/message-log" }, //          FC-16 §08 / §15
+      { label: "Search ULD Messages", href: "/uld-message-builder/search" }, //       FC-16 §14
     ],
   },
   {
@@ -397,17 +456,25 @@ const RAIL: NavBlock[] = [
     icon: Landmark,
     href: "/customs",
     subItems: [
-      { label: "Overview & SLA Watch", href: "/customs" }, //                        FC-06 §00
+      { label: "Overview & SLA Watch", href: "/customs" }, //                        section home — no flow step (FC-06 has no step 00)
       // Filing above gateway. A declaration is filed (§03) and only then transmitted
       // (§03a); the old rail inverted them because the gateway screen was annotated
       // "canonical", which is not a reason to place a step first in a flow-ordered nav.
-      { label: "SD / GD Filing — M09", href: "/customs/filing" }, //                 §03
-      { label: "Gateway (PSW / WeBOC)", href: "/customs/gateway" }, //               §03a
-      { label: "Customs Work Queue", href: "/customs/queue" }, //                    §04–08
-      { label: "Channels & OOC", href: "/customs/channels" }, //                     §04–08 (viewer)
-      { label: "Channel Detail", href: "/customs/channel-detail" }, //               §04–08 (working surface)
-      { label: "OOC Capture", href: "/customs/ooc-capture" }, //                     §08
-      { label: "Detained Cargo", href: "/customs/detained" }, //                     §05-R1
+      //
+      // The four annotations below were blanket "04–08" / "08" ranges that fitted
+      // none of the four screens. FC-06 splits the work precisely: the queue is §04a
+      // alone, the channels screen is the read-only viewer for §04 and §06–09,
+      // channel-detail is the §05-G / §05-Y / §05-R workbench, and OOC Capture is
+      // §08a-K, the keyed branch. Channels stays above channel-detail on first
+      // entry — its §04 precedes the §05-G / §05-Y / §05-R work — and Detained
+      // sits last because §05-R1 is a branch OUT of the block, not a step in it.
+      { label: "SD / GD Filing — M09", href: "/customs/filing" }, //                 FC-06 §03 · FC-02 §19
+      { label: "Gateway (PSW / WeBOC)", href: "/customs/gateway" }, //               FC-06 §03a · FC-12 §08
+      { label: "Customs Work Queue", href: "/customs/queue" }, //                    FC-06 §04a
+      { label: "Channels & OOC", href: "/customs/channels" }, //                     FC-06 §04 / §06–09 (viewer)
+      { label: "Channel Detail", href: "/customs/channel-detail" }, //               FC-06 §05-G / §05-Y / §05-R (working surface)
+      { label: "OOC Capture", href: "/customs/ooc-capture" }, //                     FC-06 §08a-K
+      { label: "Detained Cargo", href: "/customs/detained" }, //                     FC-06 §05-R1
     ],
   },
   {
@@ -416,13 +483,22 @@ const RAIL: NavBlock[] = [
     icon: Coins,
     href: "/finance-manager",
     subItems: [
-      { label: "Finance Dashboard", href: "/finance-manager" }, //                       §00
+      { label: "Finance Dashboard", href: "/finance-manager" }, //                       section home — no flow step
       // Two tariff screens, deliberately: the master editor is the versioned BASE
       // rate card, the multi-tariff engine is the negotiated matrix (agent contract ×
       // consignee tier × route × cargo class). Neither expresses what the other does.
-      { label: "Tariff Master Editor", href: "/finance-manager/tariff-master-editor" }, // §08
-      { label: "Multi-Tariff Engine (negotiated)", href: "/finance-manager/multi-tariff-engine" }, // §08
-      { label: "Charges Calculator — M10", href: "/billing/calculator" }, //            §01–08
+      // Both were annotated with a bare "08". FC-07 has since given each its own
+      // step — §07a resolves the master version in force, §07b applies the
+      // negotiated set — and both sit ABOVE FC-07 §08, the slab, because a slab
+      // cannot be applied before the rate set it belongs to is resolved.
+      { label: "Tariff Master Editor", href: "/finance-manager/tariff-master-editor" }, // FC-07 §07a
+      { label: "Multi-Tariff Engine (negotiated)", href: "/finance-manager/multi-tariff-engine" }, // FC-07 §07b
+      // The calculator's own flow steps are FC-01 §20–21 and FC-02 §25–27. FC-07's
+      // charge run §01–§08 is the same arithmetic but is drawn on the AWB charges
+      // tab (/awb/1?tab=charges, /awb/3?tab=charges), which is why MODULES M10
+      // labels this screen "Charges calculator (FC-07 §01–08)" and no FC-07 step
+      // hrefs here. The old bare "§01–08" read as an FC-07 citation it never was.
+      { label: "Charges Calculator — M10", href: "/billing/calculator" }, //            FC-01 §20–21 · FC-02 §25–27 · FC-05 §13
     ],
   },
   {
@@ -431,9 +507,12 @@ const RAIL: NavBlock[] = [
     icon: Wallet,
     href: "/billing/invoice",
     subItems: [
-      // Straight FC-07, and the § annotations now read monotonically down the block:
-      //   §09 invoice → §10–12 waiver → §13 payment → §14 five-condition AND gate →
+      // FC-07's tail, and the FC-07 events read monotonically down the block:
+      //   §09 invoice → §10–12 waiver → §13 payment → §13a gateway reconciliation →
       //   §15 G.Rent voucher (FC-07 ENDS here) → FC-01 §22b DO issued.
+      // FC-07 §14, the five-condition AND gate, is deliberately absent: it hrefs
+      // /awb/3?tab=customs, so it is drawn on the AWB hub, not in this block. The
+      // godown-rent entry used to claim it as "§14–15" and it never had it.
       //
       // Generation stays above the lifecycle screen: `/finance-manager/invoice-generation`
       // works UNBILLED cargo (source card, line items, billing validation, Generate)
@@ -441,24 +520,24 @@ const RAIL: NavBlock[] = [
       // paid/overdue/credited, the waiver chain, the payment queue. Same §09 event,
       // two hrefs across two flows (FC-17 §05 cites "FC-07 §09" by name), not an
       // inversion.
-      { label: "Invoice Generation", href: "/finance-manager/invoice-generation" }, //   §09
-      { label: "Invoice, Payment & Waiver", href: "/billing/invoice" }, //               §09–13
-      { label: "Waiver Approval Workflow", href: "/finance-manager/waiver-workflow" }, // §10–12
+      { label: "Invoice Generation", href: "/finance-manager/invoice-generation" }, //   FC-17 §05 / §10 — the FC-07 §09 event, cited by name in FC-17 §05
+      { label: "Invoice, Payment & Waiver", href: "/billing/invoice" }, //               FC-07 §09–13 · FC-02 §28–30
+      { label: "Waiver Approval Workflow", href: "/finance-manager/waiver-workflow" }, // FC-14 §06c — the FC-07 §10–12 waiver chain, which FC-07 itself draws on /billing/invoice
       // The two reconciliation screens ARE §13 — FC-17 §06 annotates
       // `/finance-manager/payment-reconciliation` as "Payment received and reconciled
       // (FC-07 §13)" — so they sit above the §14 gate and the §15 voucher, not below
       // the DO. They also remain above `erp-bridge-mapping`, which consumes them
       // (FC-17 §06 reconciled → §07 journal assembled → §08 push → §10 write-back).
-      { label: "Payment Reconciliation (bank)", href: "/finance-manager/payment-reconciliation" }, // §13 / FC-17 §06
-      { label: "Payment Gateway Reconciliation", href: "/finance-manager/payment-gateway-reconciliation" }, // §13
+      { label: "Payment Reconciliation (bank)", href: "/finance-manager/payment-reconciliation" }, // FC-17 §06 ("payment received and reconciled — FC-07 §13")
+      { label: "Payment Gateway Reconciliation", href: "/finance-manager/payment-gateway-reconciliation" }, // FC-07 §13a · FC-12 §11-P
       // Voucher then DO, contiguous and in that order. FC-07 §15 is explicitly the
       // end of the flow and its handoff note says the DO is issued after the voucher,
       // on the FC-01 spine (§21a voucher, §22b DO). The DO was below the two
       // reconciliation screens, which put the release ahead of nothing and behind
       // downstream bookkeeping.
-      { label: "Godown Rent Voucher — M11", href: "/billing/godown-rent" }, //           §14–15 / FC-01 §21a
-      { label: "Delivery Order & Release — M12", href: "/billing/delivery-order" }, //   FC-01 §22b (FC-07 handoff)
-      { label: "ERP Bridge Mapping", href: "/finance-manager/erp-bridge-mapping" }, //   FC-17 §01
+      { label: "Godown Rent Voucher — M11", href: "/billing/godown-rent" }, //           FC-07 §15 · FC-01 §21a · FC-02 §24
+      { label: "Delivery Order & Release — M12", href: "/billing/delivery-order" }, //   FC-01 §22b (FC-07 §→ handoff) · FC-05 §07
+      { label: "ERP Bridge Mapping", href: "/finance-manager/erp-bridge-mapping" }, //   FC-17 §01–04 / §07–09b / §11 · FC-12 §11
     ],
   },
   {
@@ -467,12 +546,16 @@ const RAIL: NavBlock[] = [
     icon: Truck,
     href: "/gate-entry",
     subItems: [
-      { label: "Gate Dashboard", href: "/gate-entry" }, //                            §00
-      { label: "Vehicle Entry — M13", href: "/gate-entry/vehicle-entry" }, //          §02
-      { label: "Driver Identity Register", href: "/gate-entry/driver-identity-register" }, // §03
-      { label: "Authority Letter Digitisation", href: "/gate-entry/authority-letter-digitisation" }, // §04
-      { label: "Live Vehicle Board — M13", href: "/gate-entry/live-vehicle-board" }, // §11
-      { label: "Vehicle Exit", href: "/gate-entry/vehicle-exit" }, //                  §12–13
+      // Re-derived against FC-08, which A13 renumbered to a contiguous 01–16 with
+      // §01a–§01d inserted as sub-refs. The old §02 / §03 / §04 / §11 / §12–13
+      // tokens were one step out at every row and the order below is unaffected:
+      // entry §01d → identity §02 → authority §03 → exit §10 still ascends.
+      { label: "Gate Dashboard", href: "/gate-entry" }, //                            section home — no flow step
+      { label: "Vehicle Entry — M13", href: "/gate-entry/vehicle-entry" }, //          FC-08 §01d
+      { label: "Driver Identity Register", href: "/gate-entry/driver-identity-register" }, // FC-08 §02
+      { label: "Authority Letter Digitisation", href: "/gate-entry/authority-letter-digitisation" }, // FC-08 §03 · FC-02 §31
+      { label: "Live Vehicle Board — M13", href: "/gate-entry/live-vehicle-board" }, // M13 — no flow step
+      { label: "Vehicle Exit", href: "/gate-entry/vehicle-exit" }, //                  FC-08 §10
     ],
   },
   {
@@ -481,9 +564,9 @@ const RAIL: NavBlock[] = [
     icon: PackageCheck,
     href: "/dispatch/gate-pass",
     subItems: [
-      { label: "Gate Pass & Picking — M13", href: "/dispatch/gate-pass" }, //         §23 / FC-08 §06
-      { label: "Gate-out & POD — M14", href: "/dispatch/gate-out" }, //               §24 / FC-08 §12–13
-      { label: "AWB Closure & Archive", href: "/dispatch/closure" }, //               §25–27
+      { label: "Gate Pass & Picking — M13", href: "/dispatch/gate-pass" }, //         FC-01 §23 · FC-08 §04
+      { label: "Gate-out & POD — M14", href: "/dispatch/gate-out" }, //               FC-01 §24 · FC-02 §34 · FC-08 §11
+      { label: "AWB Closure & Archive", href: "/dispatch/closure" }, //               FC-01 §25–27 · FC-02 §35 · FC-05 §08
     ],
   },
   {
@@ -510,8 +593,8 @@ const RAIL: NavBlock[] = [
     icon: Repeat,
     href: "/transhipment/register",
     subItems: [
-      { label: "Bonded Register — M15", href: "/transhipment/register" }, //          FC-09 §06–13
-      { label: "Inter-station Handoff", href: "/transhipment/handoff" },
+      { label: "Bonded Register — M15", href: "/transhipment/register" }, //          FC-09 §06–13 · FC-05 §09–11
+      { label: "Inter-station Handoff", href: "/transhipment/handoff" }, //           FC-12 §03 · FC-09 (unnumbered ownership-handoff branch)
     ],
   },
   {
@@ -520,12 +603,18 @@ const RAIL: NavBlock[] = [
     icon: PlaneTakeoff,
     href: "/export/booking",
     subItems: [
-      { label: "Booking & Allotment", href: "/export/booking" }, //                   §01
-      { label: "Acceptance & Screening", href: "/export/acceptance" }, //             §03–06
-      { label: "Customs & ANF", href: "/export/customs" }, //                         §05a–05g
-      { label: "Classification & Warehousing", href: "/export/warehousing" }, //      §07–09
-      { label: "Build-up & Declaration", href: "/export/buildup" }, //                §12–14
-      { label: "Uplift & Closure", href: "/export/uplift" }, //                       §15
+      // Re-derived against FC-11, which A16 renumbered to a contiguous 01–25. The
+      // old tokens predate that pass — "05a–05g" never existed in any numbering.
+      // A16 also confirms the order below: customs / ANF (§04–10) genuinely comes
+      // before acceptance and screening, so Customs & ANF sits above the screens
+      // holding §11–14 even though the same screen holds §02–03 as well; first
+      // entry governs, and /export/acceptance opens the flow at §02.
+      { label: "Booking & Allotment", href: "/export/booking" }, //                   FC-11 §01
+      { label: "Acceptance & Screening", href: "/export/acceptance" }, //             FC-11 §02–03 / §11–14
+      { label: "Customs & ANF", href: "/export/customs" }, //                         FC-11 §04–10
+      { label: "Classification & Warehousing", href: "/export/warehousing" }, //      FC-11 §15–17
+      { label: "Build-up & Declaration", href: "/export/buildup" }, //                FC-11 §18–18e / §21–22 · FC-16 §17
+      { label: "Uplift & Closure", href: "/export/uplift" }, //                       FC-11 §23–25
     ],
   },
   {
@@ -538,15 +627,23 @@ const RAIL: NavBlock[] = [
       // escalation → §09–10 floor notes → §11 performance → §12–13 handover submitted.
       // Performance Console sat at position 3: a shift-END measurement screen above
       // the escalation routing and floor notes that generate what it measures.
-      // Shift Handover bookends the flow (§01 and §12–13) and takes the tail slot
-      // because it is the shift's closing artifact — FC-14 §12 carries the counters
-      // into it, FC-15 §14 the equipment status, FC-13 §10 the roster shortfall.
-      { label: "Supervision Home", href: "/operations-supervisor" }, //               §00
-      { label: "Live Ops View", href: "/operations-supervisor/live-ops-view" }, //     §02–04
-      { label: "Escalation Inbox", href: "/operations-supervisor/escalation-inbox" }, // §05–08
-      { label: "MoM / Floor Notes", href: "/operations-supervisor/mom-floor-notes" }, // §09–10
-      { label: "Performance Console", href: "/operations-supervisor/performance-console" }, // §11
-      { label: "Shift Handover", href: "/operations-supervisor/shift-handover" }, //   §01 / §12–13
+      //
+      // Shift Handover moves from LAST to first-after-home, under THE GATING RULE
+      // stated in Lifter Fleet above. The previous pass defended the tail slot as a
+      // "bookend", which is the opposite rule to the one it applied to Lifter Status
+      // in the same pass, and the two screens have the same shape: FC-14 §01 says
+      // the incoming supervisor OPENS ON the outgoing supervisor's submitted
+      // handover, so nothing on the board below it is read until it has happened.
+      // A screen that is entered at §01 and re-entered at the end is placed at its
+      // first entry; the re-entry (§12–13 here, FC-15 §14 for the fleet) does not
+      // move it. One rule, both blocks — otherwise "gates what is below it" and
+      // "bookends the flow" pick whichever position was already there.
+      { label: "Supervision Home", href: "/operations-supervisor" }, //               section home — no flow step (FC-14 has no step 00)
+      { label: "Shift Handover", href: "/operations-supervisor/shift-handover" }, //   FC-14 §01 / §12–13 · FC-13 §10 · FC-15 §14
+      { label: "Live Ops View", href: "/operations-supervisor/live-ops-view" }, //     FC-14 §02–04 · FC-15 §12
+      { label: "Escalation Inbox", href: "/operations-supervisor/escalation-inbox" }, // FC-14 §05–08 · FC-13 §07a · FC-15 §06a
+      { label: "MoM / Floor Notes", href: "/operations-supervisor/mom-floor-notes" }, // FC-14 §09–10
+      { label: "Performance Console", href: "/operations-supervisor/performance-console" }, // FC-14 §11
     ],
   },
   {
@@ -555,12 +652,19 @@ const RAIL: NavBlock[] = [
     icon: Receipt,
     href: "/consignee/dashboard",
     subItems: [
-      { label: "Dashboard", href: "/consignee/dashboard" }, //                       FC-02 §30
-      { label: "My Shipments", href: "/consignee/my-shipments" }, //                 FC-02 §30
-      { label: "Notice of Arrival", href: "/consignee/notice-of-arrival" }, //        FC-06 §01
-      { label: "Pay & Download DO", href: "/consignee/pay-do" }, //                   FC-02 §32–33
-      { label: "Schedule Pickup", href: "/consignee/schedule-pickup" }, //            FC-08 §01
-      { label: "POD History", href: "/consignee/pod-history" }, //                    FC-08 §14
+      // Re-derived against FC-02 as it stands after the renumber. Every annotation
+      // in this block was wrong: the two landing screens are not flow nodes at all
+      // (the old "FC-02 §30" is /billing/invoice, the terminal's ledger), the NOA
+      // is FC-02 §18 and not FC-06 §01 (that ref is /import/arrival-advice, the
+      // terminal issuing it), Pay & Download DO is FC-02 §32 only because FC-02
+      // §33 is the CHA's /cha/do-collection, and the last two carried FC-08 refs
+      // for screens FC-08 never touches. The lane now ascends 18 → 32 → 33a → 35a.
+      { label: "Dashboard", href: "/consignee/dashboard" }, //                       portal home — no flow step
+      { label: "My Shipments", href: "/consignee/my-shipments" }, //                 no flow step
+      { label: "Notice of Arrival", href: "/consignee/notice-of-arrival" }, //        FC-02 §18
+      { label: "Pay & Download DO", href: "/consignee/pay-do" }, //                   FC-02 §32
+      { label: "Schedule Pickup", href: "/consignee/schedule-pickup" }, //            FC-02 §33a
+      { label: "POD History", href: "/consignee/pod-history" }, //                    FC-02 §35a
     ],
   },
   {
@@ -569,13 +673,18 @@ const RAIL: NavBlock[] = [
     icon: UserCheck,
     href: "/cha",
     subItems: [
-      { label: "Dashboard", href: "/cha" }, //                                       FC-06 §02
-      { label: "GD Filing Workbench", href: "/cha/gd-filing-workbench" }, //          FC-06 §03
-      { label: "Channel-Specific Workflow", href: "/cha/channel-specific-workflow" }, // §04–05
-      { label: "OOC Tracking", href: "/cha/ooc-tracking" }, //                        §08
-      { label: "Payments", href: "/cha/payments" }, //                                FC-07 §13
-      { label: "DO Collection", href: "/cha/do-collection" }, //                      FC-08 §01
-      { label: "Re-export / Long-Stay Console", href: "/cha/re-export-long-stay" }, // FC-10
+      // FC-06 §02 and §03 belong to /import/documents and /customs/filing, the
+      // terminal-side screens, not to the two broker screens they were pinned on.
+      // The broker's own FC-06 nodes are the lettered ones — §05-C and §08a-C —
+      // and its payment step is FC-07 §12a (payment MADE), not §13 (payment
+      // RECEIVED, which is the terminal's /billing/invoice).
+      { label: "Dashboard", href: "/cha" }, //                                       portal home — no flow step
+      { label: "GD Filing Workbench", href: "/cha/gd-filing-workbench" }, //          M09 legacy screen — no flow step
+      { label: "Channel-Specific Workflow", href: "/cha/channel-specific-workflow" }, // FC-06 §05-C
+      { label: "OOC Tracking", href: "/cha/ooc-tracking" }, //                        FC-06 §08a-C
+      { label: "Payments", href: "/cha/payments" }, //                                FC-07 §12a
+      { label: "DO Collection", href: "/cha/do-collection" }, //                      FC-08 §01 · FC-02 §33 · FC-01 §22a
+      { label: "Re-export / Long-Stay Console", href: "/cha/re-export-long-stay" }, // FC-10 §B3a
     ],
   },
   {
@@ -584,14 +693,26 @@ const RAIL: NavBlock[] = [
     icon: Ship,
     href: "/forwarding-agent",
     subItems: [
-      { label: "Dashboard", href: "/forwarding-agent" },
-      { label: "AWB Entry — Digital", href: "/forwarding-agent/awb-entry-digital" }, //   FC-01 §22a
-      { label: "Pickup Scheduling", href: "/forwarding-agent/pickup-scheduling" }, //     FC-08 §01
-      { label: "Driver Register", href: "/forwarding-agent/driver-register" }, //         FC-08 §03
-      { label: "Vehicle Register", href: "/forwarding-agent/vehicle-register" }, //       FC-08 §12
-      { label: "Dispatch Documents", href: "/forwarding-agent/dispatch-documents" },
-      { label: "Payments", href: "/forwarding-agent/payments" }, //                       FC-07 §13
-      { label: "Notifications & History", href: "/forwarding-agent/notifications-history" },
+      // The three pre-registration screens move ABOVE Pickup Scheduling. They are
+      // FC-08 §01a driver → §01b vehicle → §01c submitted to SAPS, and the pickup
+      // booking's own label (FC-02 §33a) says the driver and the vehicle are
+      // nominated at the booking — you cannot nominate out of a register that is
+      // listed beneath you. Scheduling now sits where the flow puts it, after the
+      // registers it reads and after the DO exists.
+      //
+      // AWB Entry is FC-02 §00, the digital pre-lodgement, not FC-01 §22a — that
+      // ref is /cha/do-collection and the mis-citation predates the FC-02 renumber.
+      // Pickup Scheduling and Payments are touched by no flow step at all; the old
+      // "FC-08 §01" and "FC-07 §13" on them named the CHA's and the terminal's
+      // screens respectively.
+      { label: "Dashboard", href: "/forwarding-agent" }, //                              portal home — no flow step
+      { label: "AWB Entry — Digital", href: "/forwarding-agent/awb-entry-digital" }, //   FC-02 §00
+      { label: "Driver Register", href: "/forwarding-agent/driver-register" }, //         FC-08 §01a
+      { label: "Vehicle Register", href: "/forwarding-agent/vehicle-register" }, //       FC-08 §01b
+      { label: "Dispatch Documents", href: "/forwarding-agent/dispatch-documents" }, //   FC-08 §01c
+      { label: "Pickup Scheduling", href: "/forwarding-agent/pickup-scheduling" }, //     no flow step — FC-02 §33a books the same slot from /consignee/schedule-pickup
+      { label: "Payments", href: "/forwarding-agent/payments" }, //                       no flow step
+      { label: "Notifications & History", href: "/forwarding-agent/notifications-history" }, // FC-05 §17a
     ],
   },
   {
@@ -601,7 +722,7 @@ const RAIL: NavBlock[] = [
     href: "/admin",
     subItems: [
       // Re-annotated against FC-12, which actually numbers these screens. The old
-      // §T3-NN / §M20-NN tokens were positional labels invented for the previous
+      // T3-NN / M20-NN tokens were positional labels invented for the previous
       // order, so they would have scrambled the moment anything moved.
       { label: "Admin Dashboard", href: "/admin" }, //                                section home
       // System Settings up from position 6. It is the tenant/installation config —
@@ -655,12 +776,21 @@ const RAIL: NavBlock[] = [
     icon: ShieldCheck,
     href: "/auditor",
     subItems: [
-      { label: "Auditor Home", href: "/auditor" }, //                                 §M19-01
-      { label: "Cargo Trace", href: "/auditor/cargo-trace" }, //                      §M20-03
-      { label: "Financial Trace", href: "/auditor/financial-trace" }, //              §M20-04
-      { label: "RBAC Snapshot", href: "/auditor/rbac-snapshot" }, //                  §M20-05
-      { label: "Export Centre", href: "/auditor/export-centre" }, //                  §M20-06
-      { label: "Reports & Dashboards", href: "/reports" }, //                         §M19-02
+      // Re-annotated against FC-12, the same fix Administration already had. The
+      // M19-NN / M20-NN tokens were positional labels invented for an earlier
+      // order — module codes with a row number after them, not flow refs, and
+      // nothing in lib/architecture.ts uses that notation.
+      //
+      // ANOMALY, named: RBAC Snapshot is FC-12 §06, in the Access & RBAC lane,
+      // and so reads backwards against §16/§17 above it. It is kept here because
+      // it is an /auditor/* route and this block is the auditor's read-only
+      // surface; moving it would put a write-free audit view inside Administration.
+      { label: "Auditor Home", href: "/auditor" }, //                                 M19 — no flow step
+      { label: "Cargo Trace", href: "/auditor/cargo-trace" }, //                      FC-12 §16
+      { label: "Financial Trace", href: "/auditor/financial-trace" }, //              FC-12 §17 · FC-17 §13
+      { label: "RBAC Snapshot", href: "/auditor/rbac-snapshot" }, //                  FC-12 §06
+      { label: "Export Centre", href: "/auditor/export-centre" }, //                  FC-12 §17a
+      { label: "Reports & Dashboards", href: "/reports" }, //                         FC-12 §18
     ],
   },
   {
@@ -669,8 +799,8 @@ const RAIL: NavBlock[] = [
     icon: Network,
     href: "/modules",
     subItems: [
-      { label: "Module Map", href: "/modules" },
-      { label: "Flow Walkthroughs", href: "/flows/FC-01", matchPrefix: "/flows" },
+      { label: "Module Map", href: "/modules" }, //                                   FC-12 §19 — the last node in that flow
+      { label: "Flow Walkthroughs", href: "/flows/FC-01", matchPrefix: "/flows" }, //  the flow views themselves — no flow step
     ],
   },
   {
