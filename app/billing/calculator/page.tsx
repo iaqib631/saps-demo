@@ -117,7 +117,7 @@ function CmtsCol({ name }: { name: string }) {
 }
 
 /**
- * CMTS `CHARGETYPE.NONUSEABEL`, rendered as the raw stored value.
+ * CMTS `CHARGETYPE.Nonuseabel`, rendered as the raw stored value.
  *
  * The wording is deliberately weak. The column name and the rows carrying it
  * suggest "this charge type is retired", but that has never been confirmed with
@@ -131,11 +131,11 @@ function NonUseabelFlag({ type }: { type: ChargeType | null }) {
   if (!type) {
     return <span className="font-mono text-[11px] text-[#CBD5E1]">—</span>;
   }
-  if (type.NONUSEABEL === null) {
+  if (type.Nonuseabel === null) {
     return (
       <span
         className="font-mono text-[11px] text-[#CBD5E1]"
-        title={`NONUSEABEL is null on ${type.CHTYPEABB}`}
+        title={`Nonuseabel is null on ${type.ChTypeAbb}`}
       >
         null
       </span>
@@ -144,15 +144,15 @@ function NonUseabelFlag({ type }: { type: ChargeType | null }) {
   return (
     <span
       className="h-[20px] px-2 rounded bg-[#FEF3C7] text-[#B45309] text-[10px] font-bold inline-flex items-center gap-1 font-mono whitespace-nowrap"
-      title="NONUSEABEL carries a value here. What the value means is not confirmed with SAPS — it is shown, not acted on."
+      title="Nonuseabel carries a value here. What the value means is not confirmed with SAPS — it is shown, not acted on."
     >
       <HelpCircle size={10} />
-      {type.NONUSEABEL}
+      {type.Nonuseabel}
     </span>
   );
 }
 
-/** The short `CHTYPEABB` code, as it prints in the legacy charge cascade. */
+/** The short `ChTypeAbb` code, as it prints in the legacy charge cascade. */
 function ChargeTypeCode({ abb }: { abb: string | null }) {
   if (!abb) return <span className="font-mono text-[11px] text-[#CBD5E1]">—</span>;
   return (
@@ -594,7 +594,7 @@ export default function ChargesCalculatorPage() {
               {/* §07 surcharges */}
               {/*
                 The codes in this card (DGR, VAL, COLD…) are CargoClassCharges
-                CATEGORIES and are deliberately not the CHTYPEABB codes shown in
+                CATEGORIES and are deliberately not the ChTypeAbb codes shown in
                 the components table below. Two short uppercase code vocabularies
                 on one screen is exactly how a reader ends up looking for "DGR"
                 in the charge-type catalogue, so the note says which is which.
@@ -720,19 +720,19 @@ export default function ChargesCalculatorPage() {
                         </th>
                         <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap">
                           Charge type
-                          <CmtsCol name="CHTYPENAME" />
+                          <CmtsCol name="ChTypeName" />
                         </th>
                         <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap">
                           Code
-                          <CmtsCol name="CHTYPEABB" />
+                          <CmtsCol name="ChTypeAbb" />
                         </th>
                         <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
                           What the heading covers
-                          <CmtsCol name="CHTYPEDESC" />
+                          <CmtsCol name="ChTypeDesc" />
                         </th>
                         <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap">
                           Catalogue flag
-                          <CmtsCol name="NONUSEABEL" />
+                          <CmtsCol name="Nonuseabel" />
                         </th>
                         <th className="text-right px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap">
                           Amount
@@ -758,7 +758,7 @@ export default function ChargesCalculatorPage() {
                           </td>
                           <td className="px-3 py-2.5 text-[12px] text-[#475569] whitespace-nowrap">
                             {l.type ? (
-                              l.type.CHTYPENAME
+                              l.type.ChTypeName
                             ) : (
                               <span className="text-[#94A3B8] italic">no heading</span>
                             )}
@@ -767,7 +767,7 @@ export default function ChargesCalculatorPage() {
                             <ChargeTypeCode abb={l.abb} />
                           </td>
                           <td className="px-3 py-2.5 text-[11.5px] text-[#64748B]">
-                            {l.type ? l.type.CHTYPEDESC : l.unmappedNote}
+                            {l.type ? l.type.ChTypeDesc : l.unmappedNote}
                           </td>
                           <td className="px-3 py-2.5">
                             <NonUseabelFlag type={l.type} />
@@ -813,7 +813,7 @@ export default function ChargesCalculatorPage() {
                 catalogue immediately asks what happened to the other four —
                 and "we filtered them out" is not an answer anyone can audit.
 
-                It matters most for NONUSEABEL. Two rows carry a value in that
+                It matters most for Nonuseabel. Two rows carry a value in that
                 column and it reads like a retirement marker, but nobody has
                 confirmed that with SAPS. Quietly dropping those rows would bake
                 the guess into the screen and remove the evidence that a guess
@@ -844,19 +844,19 @@ export default function ChargesCalculatorPage() {
                         <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
                           <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap">
                             Code
-                            <CmtsCol name="CHTYPEABB" />
+                            <CmtsCol name="ChTypeAbb" />
                           </th>
                           <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap">
                             Charge type
-                            <CmtsCol name="CHTYPENAME" />
+                            <CmtsCol name="ChTypeName" />
                           </th>
                           <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
                             What the heading covers
-                            <CmtsCol name="CHTYPEDESC" />
+                            <CmtsCol name="ChTypeDesc" />
                           </th>
                           <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap">
                             Catalogue flag
-                            <CmtsCol name="NONUSEABEL" />
+                            <CmtsCol name="Nonuseabel" />
                           </th>
                           <th className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
                             Why no line here
@@ -866,17 +866,17 @@ export default function ChargesCalculatorPage() {
                       <tbody>
                         {unusedChargeTypes.map(({ type, why }) => (
                           <tr
-                            key={type.CHTYPEABB}
+                            key={type.ChTypeAbb}
                             className="border-b border-[#F1F5F9] last:border-0"
                           >
                             <td className="px-3 py-2.5">
-                              <ChargeTypeCode abb={type.CHTYPEABB} />
+                              <ChargeTypeCode abb={type.ChTypeAbb} />
                             </td>
                             <td className="px-3 py-2.5 text-[12px] font-medium text-[#0F172A] whitespace-nowrap">
-                              {type.CHTYPENAME}
+                              {type.ChTypeName}
                             </td>
                             <td className="px-3 py-2.5 text-[11.5px] text-[#64748B]">
-                              {type.CHTYPEDESC}
+                              {type.ChTypeDesc}
                             </td>
                             <td className="px-3 py-2.5">
                               <NonUseabelFlag type={type} />
@@ -890,7 +890,7 @@ export default function ChargesCalculatorPage() {
                   <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0] flex items-start gap-2.5">
                     <HelpCircle size={14} className="text-[#B45309] flex-shrink-0 mt-0.5" />
                     <p className="text-[11px] text-[#64748B]">
-                      <span className="font-mono font-semibold text-[#0F172A]">NONUSEABEL</span>{" "}
+                      <span className="font-mono font-semibold text-[#0F172A]">Nonuseabel</span>{" "}
                       looks like it marks a charge type retired, but that is{" "}
                       <strong>not confirmed with SAPS</strong> — it is a varchar(50) that could hold
                       a date, an initial or a reason as easily as a flag, and the restored CMTS

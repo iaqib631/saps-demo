@@ -51,7 +51,7 @@ export default function ClosurePage() {
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
               FC-08 §14–16
-</span>
+            </span>
           </div>
           <h1 className="text-[24px] lg:text-[32px] font-bold text-[#0F172A] leading-tight mt-1.5">
             AWB Closure &amp; Archive

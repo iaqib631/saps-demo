@@ -352,8 +352,8 @@ export default function StorageMasterPage() {
                           Most zones carry none; that blank is the real state of
                           the column, not missing data. */}
                       <td className="px-4 py-2.5 max-w-[240px]">
-                        {l.REMARKS ? (
-                          <span className="text-[12px] text-[#0F172A]">{l.REMARKS}</span>
+                        {l.Remarks ? (
+                          <span className="text-[12px] text-[#0F172A]">{l.Remarks}</span>
                         ) : (
                           <span className="text-[12px] text-[#CBD5E1]">—</span>
                         )}

@@ -313,12 +313,6 @@ export default function HandoffPage() {
         >
           Transhipment register <ArrowUpRight size={12} />
         </Link>
-        <Link
-          href="/modules"
-          className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B4F8B] no-underline hover:underline"
-        >
-          M15 on the module map <ArrowUpRight size={12} />
-        </Link>
       </div>
     </div>
   );

@@ -7,7 +7,7 @@
  * The calculator produces amounts in AirVault's own vocabulary
  * (`storageAmount`, `handlingAmount`, `documentationCharges`…). CMTS names the
  * same money differently: `CHARGETYPE` is a catalogue of *headings* — the
- * words that print on the voucher — keyed on `CHTYPEABB`, carrying no rate of
+ * words that print on the voucher — keyed on `ChTypeAbb`, carrying no rate of
  * its own. Nothing in the domain joins the two: `CHARGETYPE` has no foreign key
  * to a calculation, and `ChargeCalculation` has no charge-type column. That
  * join is a **reading** of the legacy schema, so it is written down once, here,
@@ -19,14 +19,14 @@
  * here, not maintained here — the master editor is a separate ticket, and
  * nothing in this file writes, filters or reorders the catalogue.
  *
- * NONUSEABEL
+ * Nonuseabel
  * ----------
- * Two catalogue rows carry a `NONUSEABEL` value and it looks like a retirement
+ * Two catalogue rows carry a `Nonuseabel` value and it looks like a retirement
  * marker, but the meaning is UNCONFIRMED with SAPS (see the field comment in
  * lib/domain/masters.ts). So no function here branches on it: a charge type is
  * never hidden, skipped or excluded because of it. It is carried through to the
  * screen verbatim so a human reads the raw value and can question it. Reading
- * it as `!NONUSEABEL === active` is exactly the guess that would silently drop a
+ * it as `!Nonuseabel === active` is exactly the guess that would silently drop a
  * heading — or silently bill a retired one — on somebody's voucher.
  */
 
@@ -58,7 +58,7 @@ export interface AttributedComponent {
    * `CHARGETYPE` holds the words it prints under.
    */
   amountSource: string | null;
-  /** CMTS `CHARGETYPE.CHTYPEABB`, or null where the legacy catalogue has no heading at all. */
+  /** CMTS `CHARGETYPE.ChTypeAbb`, or null where the legacy catalogue has no heading at all. */
   abb: string | null;
   /** The catalogue row `abb` resolves to. Null when `abb` is null, or when it fails to resolve. */
   type: ChargeType | null;
@@ -118,7 +118,7 @@ export function minimumFloorApplied(c: ChargeCalculation): boolean {
  * The pairings are a reading of the CMTS catalogue against the FC-07 chain:
  * storage rent is CMTS's demurrage heading, `locationChargesAmount` is priced
  * from `LOCATIONCHARGES` but prints under the `LOC` heading, and so on. Every
- * line either names a `CHTYPEABB` or says in `unmappedNote` why it cannot —
+ * line either names a `ChTypeAbb` or says in `unmappedNote` why it cannot —
  * silence is not an option, because an unattributed number on a bill is the
  * thing this screen exists to prevent.
  */
@@ -146,7 +146,7 @@ export function attributeComponents(
       type,
       unmappedNote: type
         ? null
-        : `No CHARGETYPE row with CHTYPEABB "${abb}" — the catalogue and the calculator disagree.`,
+        : `No CHARGETYPE row with ChTypeAbb "${abb}" — the catalogue and the calculator disagree.`,
     };
   };
 
@@ -168,7 +168,7 @@ export function attributeComponents(
   // The customs hold waiver is the one line with no catalogue row behind it.
   // CMTS recorded the waiver on the voucher, not as a charge heading, because it
   // was a manual act rather than a priced service — which is precisely why FC-07
-  // §10–12 gives it an approval chain. Inventing a CHTYPEABB for it would make
+  // §10–12 gives it an approval chain. Inventing a ChTypeAbb for it would make
   // the migration look more complete than it is.
   lines.push({
     label: "Customs hold waiver",
@@ -188,7 +188,7 @@ export function attributeComponents(
 /**
  * Why a catalogue heading produced no line on THIS calculation.
  *
- * Keyed on `CHTYPEABB` and deliberately partial: any heading without an entry
+ * Keyed on `ChTypeAbb` and deliberately partial: any heading without an entry
  * falls back to the generic reason below. A future row added to `CHARGE_TYPES`
  * then still appears on screen with an honest "not produced here" rather than
  * vanishing because this map was not updated — the failure mode of a lookup
@@ -209,7 +209,7 @@ const NOT_PRODUCED_FALLBACK =
  * These are shown, not filtered. A catalogue of twelve headings against a
  * voucher of eight lines raises the obvious question — "what happened to the
  * other four?" — and a screen that answers it is auditable in a way one that
- * quietly renders eight is not. Two of the absentees carry a `NONUSEABEL` value
+ * quietly renders eight is not. Two of the absentees carry a `Nonuseabel` value
  * and their absence here is NOT evidence that the flag caused it: nothing in
  * this file reads that column.
  */
@@ -219,15 +219,15 @@ export function chargeTypesWithNoLine(
 ): Array<{ type: ChargeType; why: string }> {
   const used = new Set(lines.map((l) => l.abb).filter((a): a is string => a !== null));
 
-  return CHARGE_TYPES.filter((t) => !used.has(t.CHTYPEABB)).map((t) => ({
+  return CHARGE_TYPES.filter((t) => !used.has(t.ChTypeAbb)).map((t) => ({
     type: t,
     why:
-      t.CHTYPEABB === "MIN"
+      t.ChTypeAbb === "MIN"
         ? // Not "no floor" — the floor is real and simply was not reached, which
           // is the more useful thing to say next to a bill.
           `Floor of ${formatPkr(c.minimumCharges)} from CARGOSUBCLASS.MINCHARGES. The computed components come to ${formatPkr(
             componentsBeforeFloor(c),
           )}, so the floor was not reached and adds nothing.`
-        : (NOT_PRODUCED_HERE[t.CHTYPEABB] ?? NOT_PRODUCED_FALLBACK),
+        : (NOT_PRODUCED_HERE[t.ChTypeAbb] ?? NOT_PRODUCED_FALLBACK),
   }));
 }

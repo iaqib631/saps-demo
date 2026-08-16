@@ -100,8 +100,15 @@ All six previously-unowned areas are in scope and get a flow. Nothing is parked.
 | **FC-17** Finance ERP Bridge | GL mapping, posting, sync log | `/finance-manager/erp-bridge-mapping` |
 | **FC-18** Airmail / Postal | delivery bill, transfer manifest, mail types | **not built** — CMTS `AIRMAILDELIVERYBILL`, `AIRMAILTRANSFERMANIFEST`, `POMailType` |
 
-FC-05 and FC-12 also gain the walkthrough entries they never had, so all eighteen flows are walkable
-at `/flows/FC-nn`.
+FC-05 and FC-12 also gain the `FLOWS[]` entries they never had, so all eighteen flows are declared
+in `lib/architecture.ts`.
+
+> **Superseded, 2026-08-16.** This originally read "…so all eighteen flows are walkable at
+> `/flows/FC-nn`". The flow walkthrough renderer (`app/flows/[flowId]`) and the module map
+> (`app/modules`) were both deleted when the **Architecture & Flows** sidebar block was removed, so
+> no flow is walkable in the UI any more. The eighteen `FLOWS[]` entries remain, and are still the
+> authority the rail order and the step-sequence audits are checked against — they simply have no
+> screen. See the header of `lib/architecture.ts`.
 
 ## 4. Portal decision
 

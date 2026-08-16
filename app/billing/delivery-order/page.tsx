@@ -108,7 +108,7 @@ export default function DeliveryOrderPage() {
       {dos.length === 0 ? (
         <EmptyState
           title="No delivery orders at this site"
-          description="A DO issues once charges are settled and all five release conditions pass — FC-07 §13."
+          description="A DO issues once charges are settled and all five release conditions pass — FC-01 §22, on the FC-07 §14 gate."
         />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -148,8 +148,9 @@ export default function DeliveryOrderPage() {
                     <p className="text-[11px] text-[#64748B] mt-0.5">
                       {x.AWBNO} · {formatPkr(x.AMOUNT)}
                     </p>
-                    {/* 22a vs 22b. A requested DO has no issue date yet, so show
-                        the request rather than a blank where a date should be. */}
+                    {/* Before vs after the FC-01 §22 issuance. A DO that has not
+                        been issued has no issue date yet, so show when the record
+                        was raised rather than a blank where a date should be. */}
                     <p className="text-[11px] text-[#94A3B8] mt-0.5">
                       {x.DODATE
                         ? `Issued ${formatDate(x.DODATE)}`

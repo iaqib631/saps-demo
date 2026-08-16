@@ -240,6 +240,23 @@ export default function CustomsIndexPage() {
   const watchRows = (breaching.length ? breaching : watch).slice(0, WATCH_ROWS);
 
   /**
+   * Channel Detail is a drill-in, so the card needs a record to drill into.
+   * The bare path only redirects back to the channels list now, and a card
+   * that lands on the list beside the card that IS the list is a dead entry.
+   * Pick what an officer would open first — a declaration with an open query,
+   * then one with an exam still to be signed off, then whatever is on file.
+   */
+  const workbenchHref = useMemo(() => {
+    const target =
+      clearances.find((c) => c.queries.some((q) => !q.closedAt)) ??
+      clearances.find(
+        (c) => c.examination?.scheduledAt != null && c.examination.examinedAt == null,
+      ) ??
+      clearances[0];
+    return target ? `/customs/channel-detail/${target.awbId}` : "/customs/channels";
+  }, [clearances]);
+
+  /**
    * Entry cards in FC-06 FLOW ORDER, not alphabetical and not by portal
    * seniority. The sequence is the reason this page exists:
    *
@@ -247,8 +264,8 @@ export default function CustomsIndexPage() {
    *   §03a and only then transmitted     → /customs/gateway
    *        the queue you work it from    → /customs/queue
    *   §04–08 channel treatment           → /customs/channels
-   *        the officer's working surface → /customs/channel-detail
-   *   §08  out-of-charge captured        → /customs/ooc-capture
+   *        the officer's working surface → /customs/channel-detail/[awbId]
+   *   §08a-K out-of-charge keyed         → /customs/ooc-capture
    *   §05-R1 what customs held back      → /customs/detained
    *
    * The retired nav had gateway above filing, which inverts the first two
@@ -302,13 +319,13 @@ export default function CustomsIndexPage() {
         title: "Channel Detail",
         description:
           "The officer's working surface — record the yellow-channel document review, or schedule and result the red-channel examination.",
-        href: "/customs/channel-detail",
+        href: workbenchHref,
         icon: <FileCheck2 size={20} color="#0B2545" />,
         count: kpi.yellowQueriesOpen,
         countLabel: "open queries",
       },
       {
-        step: "FC-06 §08",
+        step: "FC-06 §08a-K",
         title: "OOC Capture",
         description:
           "Key an out-of-charge off the print when the gateway is down — reference, duties, taxes, ANF / ASF clearances and the OOC PDF.",
@@ -328,7 +345,7 @@ export default function CustomsIndexPage() {
         countLabel: "live detentions",
       },
     ],
-    [clearances, kpi, liveDetends],
+    [clearances, kpi, liveDetends, workbenchHref],
   );
 
   const tiles = [

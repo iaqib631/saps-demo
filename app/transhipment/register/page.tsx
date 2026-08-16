@@ -13,7 +13,7 @@
  * all, which is why cargo under bond was effectively untracked between
  * arrival and re-tender.
  *
- * The re-tender gate (§T10) is the substance: cargo cannot leave until the
+ * The re-tender gate (§10) is the substance: cargo cannot leave until the
  * permit is live, the bond trail is unbroken, charges are raised and the
  * onward flight is confirmed. A lapsed permit is not paperwork — it means
  * the cargo is sitting outside the terms customs allowed it in under.
@@ -313,7 +313,7 @@ export default function TranshipmentRegisterPage() {
                       <div className="flex items-center gap-2">
                         <ShieldCheck size={15} className="text-[#64748B]" />
                         <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                          Re-tender gate — §T10
+                          Re-tender gate — §10
                         </h3>
                       </div>
                       <span

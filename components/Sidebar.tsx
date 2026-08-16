@@ -15,10 +15,7 @@ import {
   ChevronRight,
   UserCog,
   X,
-  Network,
   Plug,
-  KeyRound,
-  Package,
   Container,
   Gauge,
   ShieldCheck,
@@ -32,10 +29,11 @@ import {
   Send,
   Repeat,
   PlaneTakeoff,
+  Mail,
 } from "lucide-react";
 
 /* =============================================================================
- * PORTAL-SEPARATED NAVIGATION  ·  three portals, twenty-five blocks, one rail
+ * PORTAL-SEPARATED NAVIGATION  ·  three portals, twenty-three blocks, one rail
  * -----------------------------------------------------------------------------
  * The client requirement is two things at once, and they pull in opposite
  * directions:
@@ -58,6 +56,18 @@ import {
  * The audience tag on every heading is not decoration: it is the repo-split
  * boundary written into the nav, so that when the portals are extracted the
  * question "who ships this screen?" is answerable from the sidebar alone.
+ *
+ * WHAT THE RAIL IS NOT. An owned route is not automatically a rail entry. A
+ * screen that shows ONE record, reached by clicking that record in a list, is a
+ * DRILL-IN target: somewhere you are taken, not somewhere you navigate to. A nav
+ * slot for it has to name a record in its href — `/awb/1`, "the" task, "the"
+ * channel — and so offers a fixture as if it were a destination, which is what
+ * "Select an AWB to view channel detail" says when you arrive from the rail
+ * instead of from a row. Those routes live in `DRILL_IN` below, each naming the
+ * parent list it is entered from; the four auth states, which render outside the
+ * app shell entirely, live in `AUTH_STATES`. Both are folded into the route →
+ * portal index exactly as the rail is, so an off-rail route is still an OWNED
+ * route — see the audit invariant stated above `hits()`.
  * ===========================================================================*/
 
 /**
@@ -102,7 +112,10 @@ export const PORTALS: Record<PortalId, PortalMeta> = {
   warehouse: {
     label: "Warehouse Portal",
     audience: "internal-ops",
-    flow: "FC-01 · FC-02 · FC-03 · FC-04 · FC-05 · FC-06 · FC-07 · FC-08 · FC-09 · FC-10 · FC-11 · FC-13 · FC-14 · FC-15 · FC-16 · FC-17",
+    // FC-18 joins the tag with the Airmail block below. Airmail is handled by the
+    // same terminal staff on the same site, so it is a warehouse-portal flow even
+    // though it shares no step with the FC-01 import spine.
+    flow: "FC-01 · FC-02 · FC-03 · FC-04 · FC-05 · FC-06 · FC-07 · FC-08 · FC-09 · FC-10 · FC-11 · FC-13 · FC-14 · FC-15 · FC-16 · FC-17 · FC-18",
   },
   consignee: {
     label: "Consignee Portal",
@@ -120,9 +133,12 @@ interface NavLeaf {
   label: string;
   href: string;
   /**
-   * Only for dynamic segments. `/awb/[awbId]` and `/flows/[flowId]` cannot be
-   * named by a single href, so they declare the prefix that should light them
-   * up. Every other entry matches EXACTLY — see `hits()` for why that is safe.
+   * Only for dynamic segments, which cannot be named by a single href. No RAIL
+   * entry needs it any more — `/flows/[flowId]` is gone and `/awb/[awbId]` is a
+   * registered drill-in — but `DRILL_IN` reuses this shape and the AWB hub still
+   * declares `/awb`, which is the one thing mapping every `/awb/*` id to the
+   * warehouse portal for the header. Every other entry matches EXACTLY — see
+   * `hits()` for why that is safe.
    */
   matchPrefix?: string;
 }
@@ -214,7 +230,7 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
   {
     from: "*",
     to: "/awb/[awbId]",
-    why: "The AWB hub is the object every portal drills into — the target of nineteen flow steps across FC-02, FC-03, FC-07, FC-08 and FC-09, counting one step per array entry over every /awb/* href and tab. It is shared infrastructure, so it sits at the top of the rail and every link into it is a drill-in reference, never an onward CTA.",
+    why: "The AWB hub is the object every portal drills into — the target of nineteen flow steps across FC-02, FC-03, FC-07, FC-08 and FC-09, counting one step per array entry over every /awb/* href and tab. Every link into it is a drill-in reference, never an onward CTA, which is precisely why it is registered in DRILL_IN and holds no rail slot: it has no position in flow order to be above or below.",
   },
 ];
 
@@ -231,9 +247,10 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
  * why the CHA desk holding FC-08 §01, the trigger for the gate pass, sits BELOW
  * Dispatch. `UPWARD_REFERENCES` names the two links that cross the wrong way.
  *
- * Block sequence and why, in the order they appear below:
- *   AWB Hub             shared infrastructure: the object every portal drills
- *                       into, the target of nineteen flow steps.
+ * Block sequence and why, in the order they appear below. The AWB hub, the
+ * channel-detail and task-detail workbenches and the four auth states are
+ * absent from this list on purpose — they are off-rail routes, registered in
+ * `DRILL_IN` and `AUTH_STATES` beneath the array:
  *   Planning            FC-13: forecast → capacity → slots → roster.
  *   Import Documentation FC-01 spine, run 1: §01–04 through §13–14.
  *   Storage & Allocation the location model, then FC-01 §10 tagging and §15–16.
@@ -252,8 +269,14 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
  *   Dispatch & Closure  run 2: gate pass → gate-out → closure.
  *   Exceptions & CDR    FC-04 and FC-10, with the aging dashboard last.
  *   Transhipment        FC-09.
+ *   Airmail             FC-18. A whole cargo type, not a stage of the import run —
+ *                       the block's own comment argues the position against FC-09.
  *   Export              FC-11.
  *   Supervision         FC-14: hand over, watch the floor, escalate, measure it.
+ *   Integrations        the site's gateway estate. Last in the warehouse run
+ *                       because it is site infrastructure, not a step in the
+ *                       cargo pipeline — the block's own comment argues the
+ *                       position and the per-site ownership.
  *   — consignee portal —
  *   Customer Portal     the consignee receives the NOA, pays, collects the DO.
  *   CHA Portal          the broker files the SD, pays, collects the DO (FC-08 §01).
@@ -261,13 +284,7 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
  *                       will present at the gate (FC-08 §01a–§01c).
  *   — superadmin portal —
  *   Administration      the write side of configuration and RBAC.
- *   Integrations        the gateway estate. Placed directly below Administration
- *                       because FC-12's lanes run Sites & HQ → Access & RBAC →
- *                       Integration gateways → Audit & reporting, and because
- *                       FC-17 §12 integration-status feeds §13 financial trace.
  *   Audit & Oversight   read-only: nothing flows out of it.
- *   Architecture & Flows FC-12 §19 /modules, the last node in that flow.
- *   Access & Session    the auth states, outside the app shell entirely.
  * ===========================================================================*/
 
 /**
@@ -279,19 +296,6 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
 const HOME: NavLeaf & { icon: React.ComponentType<{ size?: number; strokeWidth?: number }> } = { label: "Home", icon: LayoutDashboard, href: "/" };
 
 const RAIL: NavBlock[] = [
-  {
-    // Had NO sidebar entry at all before this rewrite, despite being the declared
-    // target of nineteen flow steps across FC-02, FC-03, FC-07, FC-08 and FC-09
-    // (one step per array entry, over every /awb/* href and tab in lib/architecture.ts;
-    // the old note said "twelve … FC-02, FC-07, FC-08, FC-09" and undercounted).
-    // It was reachable only by accident, through in-page deep links. `/awb/1` is
-    // the demo's first fixture AWB; `matchPrefix` keeps the entry lit for any id.
-    portal: "warehouse",
-    label: "AWB Hub — M03",
-    icon: Package,
-    href: "/awb/1",
-    matchPrefix: "/awb",
-  },
   {
     portal: "warehouse",
     label: "Planning & Capacity",
@@ -399,8 +403,11 @@ const RAIL: NavBlock[] = [
       // an unfit asset. It gates every screen below it, so it cannot sit beneath them.
       // FC-15 §14 re-enters the same fleet at the shift handover; first entry governs.
       { label: "Lifter Status", href: "/lifter-operator/lifter-status" }, //          FC-15 §01–02b
+      // FC-15 §04 / §06–09 is /lifter-operator/task-detail, which is NOT listed
+      // here: it is the one-task workbench you open from a row of My Tasks, so it
+      // is a registered drill-in rather than a rail entry. The §03 → §04 edge is
+      // still satisfied, it is just drawn by the list rather than by the nav.
       { label: "My Tasks", href: "/lifter-operator/tasks" }, //                       FC-15 §03
-      { label: "Task Detail", href: "/lifter-operator/task-detail" }, //              FC-15 §04 / §06–09
       { label: "RFID Scan", href: "/lifter-operator/rfid-scan" }, //                  FC-15 §05 · FC-03 bind step (unnumbered)
       { label: "Movement Log", href: "/lifter-operator/movement-log" }, //            FC-15 §10–11 · FC-14 §06d
     ],
@@ -461,18 +468,23 @@ const RAIL: NavBlock[] = [
       // (§03a); the old rail inverted them because the gateway screen was annotated
       // "canonical", which is not a reason to place a step first in a flow-ordered nav.
       //
-      // The four annotations below were blanket "04–08" / "08" ranges that fitted
-      // none of the four screens. FC-06 splits the work precisely: the queue is §04a
-      // alone, the channels screen is the read-only viewer for §04 and §06–09,
-      // channel-detail is the §05-G / §05-Y / §05-R workbench, and OOC Capture is
-      // §08a-K, the keyed branch. Channels stays above channel-detail on first
-      // entry — its §04 precedes the §05-G / §05-Y / §05-R work — and Detained
-      // sits last because §05-R1 is a branch OUT of the block, not a step in it.
+      // The annotations below were blanket "04–08" / "08" ranges that fitted none
+      // of the screens they sat on. FC-06 splits the work precisely: the queue is
+      // §04a alone, the channels screen is the read-only viewer for §04 and §06–09,
+      // and OOC Capture is §08a-K, the keyed branch. Detained sits last because
+      // §05-R1 is a branch OUT of the block, not a step in it.
+      //
+      // FC-06 §05-G / §05-Y / §05-R is /customs/channel-detail, and it is NOT
+      // listed here. It is the working surface for ONE declaration's channel —
+      // reached by clicking a row on Channels & OOC, which is why it greets a
+      // direct visit with "Select an AWB to view channel detail" — so it is a
+      // registered drill-in. The §04 → §05 ordering it used to demonstrate is
+      // unaffected: the viewer above still comes first, it just hands off through
+      // its own rows now instead of through the nav.
       { label: "SD / GD Filing — M09", href: "/customs/filing" }, //                 FC-06 §03 · FC-02 §19
       { label: "Gateway (PSW / WeBOC)", href: "/customs/gateway" }, //               FC-06 §03a · FC-12 §08
       { label: "Customs Work Queue", href: "/customs/queue" }, //                    FC-06 §04a
       { label: "Channels & OOC", href: "/customs/channels" }, //                     FC-06 §04 / §06–09 (viewer)
-      { label: "Channel Detail", href: "/customs/channel-detail" }, //               FC-06 §05-G / §05-Y / §05-R (working surface)
       { label: "OOC Capture", href: "/customs/ooc-capture" }, //                     FC-06 §08a-K
       { label: "Detained Cargo", href: "/customs/detained" }, //                     FC-06 §05-R1
     ],
@@ -499,6 +511,20 @@ const RAIL: NavBlock[] = [
       // labels this screen "Charges calculator (FC-07 §01–08)" and no FC-07 step
       // hrefs here. The old bare "§01–08" read as an FC-07 citation it never was.
       { label: "Charges Calculator — M10", href: "/billing/calculator" }, //            FC-01 §20–21 · FC-02 §25–27 · FC-05 §13
+      // BELOW the calculator and ABOVE the invoice block, which is exactly the
+      // span this screen covers. The calculator COMPUTES the figure; this is the
+      // stored derivation of it — the CMTS `grCharges` working set, one row per
+      // band walked — and the invoice that prints the result is FC-07 §09, the
+      // first entry of the block beneath. Its own steps are the ones between:
+      // §03 free period, §03a chargeable period, §07 category surcharge, §08 slab.
+      // Those four href /awb/*?tab=charges rather than this route, the same way
+      // the calculator above carries FC-07 §01–08 without an FC-07 href — the
+      // block comment already argues that case, and MODULES M10 states it.
+      //
+      // A rail entry rather than a drill-in: the href names no fixture, and the
+      // screen opens on its own list of runs, so nothing has to be clicked
+      // elsewhere first to make it a destination.
+      { label: "Charge Working Set", href: "/billing/charge-working-set" }, //          FC-07 §03 / §03a / §07–08 · committed against the §15 voucher
     ],
   },
   {
@@ -540,7 +566,7 @@ const RAIL: NavBlock[] = [
       // the bare parent number and left the CHA's collection at §22a below it,
       // so this screen is §22 and /cha/do-collection is §22a. Order unchanged.
       { label: "Delivery Order & Release — M12", href: "/billing/delivery-order" }, //   FC-01 §22 (FC-07 §→ handoff) · FC-05 §07
-      { label: "ERP Bridge Mapping", href: "/finance-manager/erp-bridge-mapping" }, //   FC-17 §01–04 / §07–09b / §11 · FC-12 §11
+      { label: "ERP Bridge Mapping", href: "/finance-manager/erp-bridge-mapping" }, //   FC-17 §01–04 / §07–09b / §11 · FC-12 §11-E
     ],
   },
   {
@@ -569,6 +595,21 @@ const RAIL: NavBlock[] = [
     subItems: [
       { label: "Gate Pass & Picking — M13", href: "/dispatch/gate-pass" }, //         FC-01 §23 · FC-08 §04
       { label: "Gate-out & POD — M14", href: "/dispatch/gate-out" }, //               FC-01 §24 · FC-02 §34 · FC-08 §11
+      // THIRD OF FOUR, and the position is forced from both sides by FC-08's own
+      // tail: §11 gate-out verification (the entry above) → §12 POD captured → §14
+      // AWB marked delivered (HERE) → §16 documents archived, file closed (the entry
+      // below). The gate event is the boundary, the POD is the receiver's evidence,
+      // and CMTS `PHYSICALDELIVERY` is the terminal's own book entry — three writes
+      // by three people at three moments, which is why the table survives instead of
+      // being three more columns on the gate pass.
+      //
+      // §12 and §14 both href /awb/2?tab=dispatch in lib/architecture.ts, so no
+      // FC-08 step names this route. That is the same shape as Charge Working Set
+      // over in Tariff & Charges, whose §03 / §03a / §07–08 href /awb/*?tab=charges:
+      // a screen is placed at the step it IS, and the ref is the citation, not a
+      // claim on the href. A rail entry rather than a drill-in for the usual test —
+      // the href names no fixture and the screen opens on its own list of vouchers.
+      { label: "Physical Delivery Record", href: "/dispatch/physical-delivery" }, //  FC-08 §14 (CMTS PHYSICALDELIVERY + DELIVERYINFO)
       { label: "AWB Closure & Archive", href: "/dispatch/closure" }, //               FC-01 §25–27 · FC-02 §35 · FC-05 §08
     ],
   },
@@ -601,6 +642,47 @@ const RAIL: NavBlock[] = [
     ],
   },
   {
+    // A BLOCK OF ITS OWN, and the argument is cargo type rather than stage. FC-18
+    // is a postal dispatch received off a flight, weighed against CN-35 tags,
+    // segregated, and either handed to Pakistan Post or re-tendered onward. It
+    // shares NO step with the FC-01 import spine — there is no air waybill, no
+    // consignee, no piece count, no Single Declaration — so wedging these screens
+    // into Import Documentation or Dispatch would put a flow with none of that
+    // flow's objects inside it.
+    //
+    // POSITION: after Transhipment, before Export. The build note asked for "after
+    // Transhipment and BEFORE Exceptions", which is not satisfiable — Exceptions &
+    // CDR sits ABOVE Transhipment in this rail, so the two halves name opposite
+    // sides of the same block, and honouring the second half would mean moving an
+    // existing block. The half that is satisfiable is the one with a reason behind
+    // it: FC-18 §07's own note says its onward-leg gate "is deliberately the same
+    // shape as FC-09's re-tender gate — so a reviewer who has read one recognises
+    // the other", and adjacency to Transhipment is what makes that recognition
+    // available. Beyond that, nothing constrains the slot: all ten resolved FC-18
+    // steps href /airmail/*, so no flow edge crosses this block's boundary in
+    // either direction and no ordering rule is at stake. The trio now reads as the
+    // three whole-cargo-type flows in a row — FC-09 transhipped, FC-18 postal,
+    // FC-11 export — beneath the import run they are alternatives to.
+    //
+    // §10 and §12 are absent because they have no screen: §10 is BLK-01 (no airmail
+    // rate exists in the tariff master) and §12 folds into M20 archive. Both are
+    // null hrefs in lib/architecture.ts, deliberately, so there is nothing to list.
+    portal: "warehouse",
+    label: "Airmail (FC-18)",
+    icon: Mail,
+    href: "/airmail",
+    subItems: [
+      // Ascends §01 → §05 → §06 → §07–08 with no gaps other than the two unbuilt
+      // steps above. The dispatch RECORD — FC-18 §02–04, §09 and §11 — is not
+      // listed: it is one dispatch, opened from a row of the register, and it is
+      // registered in DRILL_IN below.
+      { label: "Dispatch Register — M26", href: "/airmail" }, //                      FC-18 §01
+      { label: "Irregularities — CN-43", href: "/airmail/irregularities" }, //        FC-18 §05
+      { label: "Segregation & Zones", href: "/airmail/segregation" }, //              FC-18 §06
+      { label: "Transfer Manifests", href: "/airmail/transfer-manifest" }, //         FC-18 §07–08
+    ],
+  },
+  {
     portal: "warehouse",
     label: "Export (FC-11)",
     icon: PlaneTakeoff,
@@ -618,6 +700,33 @@ const RAIL: NavBlock[] = [
       { label: "Classification & Warehousing", href: "/export/warehousing" }, //      FC-11 §15–17
       { label: "Build-up & Declaration", href: "/export/buildup" }, //                FC-11 §18–18e / §21–22 · FC-16 §17
       { label: "Uplift & Closure", href: "/export/uplift" }, //                       FC-11 §23–25
+      // THE §25 PAIR. The screen is CMTS `ExportGodownrent`, the CHARGING half of
+      // §25 "Export invoice / closure / archive". It was the last entry in this
+      // block while §25's other half — the INTERNATIONALCARGO revenue share — was
+      // BLK-02 in FC-11's own amendment and had no screen; CMTS_SCOPE_DECISIONS Q3
+      // has since unparked it, so the entry beneath is that half and this one is no
+      // longer last. The position is otherwise unchanged and still forced from
+      // above: Uplift & Closure opens at §23, so this cannot be lifted past it.
+      //
+      // It bills clocks that start much earlier — `AccpetanceDate` is §12 cargo
+      // acceptance and the FROMDATE/TODATE span is §17 export warehousing — but a
+      // screen is placed at the step it IS, not at the steps it reads: §12 and §14
+      // href /export/acceptance and §15–17 href /export/warehousing, and both of
+      // those stand above it already.
+      { label: "Billing & Rent Voucher", href: "/export/billing" }, //                 FC-11 §25 (charging half — CMTS ExportGodownrent)
+      // LAST, and BELOW /export/billing rather than beside it. Same step, two halves:
+      // billing is what the shipper is CHARGED for the days the cargo was held
+      // (`ExportGodownrent`), this is what the terminal RETAINS on the carriage once
+      // the agent's commission is out (`INTERNATIONALCARGO`, 44 columns). You cannot
+      // split a figure that has not been billed, so the charging half stays above.
+      //
+      // It reads §01 (the airline sold the capacity these rates price) and §03 (the
+      // scale produced the kilo CHRGWEIGHT bills on), and both of those screens —
+      // Booking & Allotment and Acceptance & Screening — already stand above it. The
+      // build plan's G5 row cites "FC-11 §15" for this table; that predates the A16
+      // renumber, which made §15 "Cargo classification". lib/architecture.ts names
+      // INTERNATIONALCARGO at §25, and §25 is the citation used here.
+      { label: "Revenue Share", href: "/export/revenue" }, //                           FC-11 §25 (revenue half — CMTS INTERNATIONALCARGO)
     ],
   },
   {
@@ -647,6 +756,54 @@ const RAIL: NavBlock[] = [
       { label: "Escalation Inbox", href: "/operations-supervisor/escalation-inbox" }, // FC-14 §05–08 · FC-13 §07a · FC-15 §06a
       { label: "MoM / Floor Notes", href: "/operations-supervisor/mom-floor-notes" }, // FC-14 §09–10
       { label: "Performance Console", href: "/operations-supervisor/performance-console" }, // FC-14 §11
+    ],
+  },
+  {
+    // MOVED OUT OF SUPERADMIN, and the reason is ownership, not layout. The
+    // gateway estate is provisioned, credentialed and watched PER SITE: a PSW /
+    // WeBOC endpoint, an RFID reader fleet and their health boards belong to one
+    // terminal, not to the platform. Superadmin is the platform-wide portal — the
+    // one thing that is NOT per site — so a per-site estate cannot live there, and
+    // the warehouse portal is the per-site portal. `/admin/integrations` (FC-12
+    // §13) stays behind in Administration and is the right screen for that: it is
+    // the platform's register OF the connectors, not any one site's live estate.
+    //
+    // LAST in the warehouse run, and deliberately not anywhere above. Everything
+    // from Planning down to Operations Supervision is one continuous read — the
+    // FC-01 spine, its FC-04 / FC-09 / FC-10 / FC-11 branches, then the shift that
+    // supervises them — and this block is site infrastructure rather than a step
+    // in the cargo pipeline. Wedged into that run it would interrupt consecutive
+    // flow steps with a gateway health board; at the foot of the run it interrupts
+    // nothing, which is the correct statement about a surface you open when the
+    // cargo work is not what you are doing.
+    //
+    // Flow edges, since the old comment argued this position from FC-12's lanes:
+    // FC-17 §12 `/integration-status` → §13 `/auditor/financial-trace` still reads
+    // DOWN, because the whole warehouse run sits above the whole superadmin run.
+    // FC-12 §12 `/integration-status` → §13 `/admin/integrations` now reads down
+    // too — it was the inversion the old slot could not fix. What flips in
+    // exchange is FC-12 §01 / §04–07 (`/admin/settings`, roles, users), which now
+    // sit BELOW §02 / §10 / §12 here. That is the same class of anomaly as the CHA
+    // desk holding FC-08 §01 below Dispatch: the three-portal grouping outranks
+    // flow order ACROSS a portal boundary, and `/integration-status` appears twice
+    // in FC-12 (§02 HQ sync board, §12 gateway health board) so no linear order
+    // ever satisfied both anyway. Precedent for warehouse holding FC-12 steps is
+    // already in this rail — Inter-station Handoff is FC-12 §03 and sits in
+    // Transhipment — which is why the portal heading's flow tag is unchanged.
+    portal: "warehouse",
+    label: "Integrations",
+    icon: Plug,
+    href: "/integration-status",
+    subItems: [
+      { label: "Integration Status", href: "/integration-status" }, //               FC-12 §02 / §12
+      { label: "RFID Integration", href: "/rfid-integration" }, //                    FC-12 §10
+      // Build-QA surface rather than a client-facing screen. It is listed rather
+      // than hidden because the audit rule for this rail is that every route under
+      // app/ is owned by exactly one portal — an unowned route is the thing being
+      // prevented, and being off the rail (see DRILL_IN / AUTH_STATES) is not the
+      // same as being unowned. This one has no parent list to be drilled into
+      // from, so a nav slot is the only thing that owns it.
+      { label: "QA Checklist (internal)", href: "/qa-checklist" },
     ],
   },
   {
@@ -741,36 +898,35 @@ const RAIL: NavBlock[] = [
       { label: "Roles & Permissions", href: "/admin/roles" }, //                      FC-12 §04
       { label: "Users", href: "/admin/users" }, //                                    FC-12 §05
       { label: "Master Data Editor", href: "/admin/master-data" }, //                 FC-12 §07
+      // A RAIL ENTRY, NOT A DRILL-IN, and the test is the one this file already
+      // applies: a drill-in is a screen showing ONE record whose href has to name a
+      // fixture, so that a rail slot would advertise demo row #1 as a destination.
+      // This href names nothing — `/admin/settings/lookup-registry` is the WHOLE
+      // `Lookup` / `Setting` store, and the screen opens on its own grouped list of
+      // keys with search, filters and an importer. Nothing has to be clicked
+      // elsewhere to make it a place. That is the identical argument Charge Working
+      // Set carries in Tariff & Charges, and the same one that keeps `/awb/1` off
+      // the rail for the opposite reason.
+      //
+      // POSITION: below BOTH screens that link into it, which is what fixes it here
+      // rather than under System Settings where the path would suggest. The card on
+      // /admin/settings (FC-12 §01) and the "configuration does not live here"
+      // pointer on /admin/master-data (FC-12 §07) are both onward CTAs — "the value
+      // you want is keyed, edit it there" — and the rail's rule is that an onward
+      // CTA points DOWN. Sitting under System Settings would satisfy §01 and invert
+      // §07, buying an UPWARD_REFERENCES exception for nothing; sitting here
+      // satisfies both and needs none. It reads as the residue of the block above
+      // it, too: Master Data Editor holds the coded entities that have a table of
+      // their own, this holds everything CMTS tunes at runtime that does not.
+      //
+      // NO FLOW REF, deliberately. FC-12 numbers no step for it — it exists because
+      // CMTS_SCOPE_DECISIONS Q6 says a schema-only restore cannot recover the keys,
+      // so the editor must be key-agnostic. Inventing a § for it is the defect this
+      // rail has purged twice.
+      { label: "Lookup & Setting Registry", href: "/admin/settings/lookup-registry" }, // CMTS decision Q6 — no flow step
       { label: "Integration Console", href: "/admin/integrations" }, //               FC-12 §13
       { label: "Audit Trail Browser", href: "/admin/audit-trail" }, //                FC-12 §14
       { label: "Session & Event Log", href: "/admin/event-log" }, //                  FC-12 §15
-    ],
-  },
-  {
-    // Up from fourth in this portal. Two flow edges were inverted by the old slot:
-    // FC-17 §12 `/integration-status` → §13 `/auditor/financial-trace` put the
-    // successor above its predecessor, and FC-12's own lane order is Sites & HQ →
-    // Access & RBAC → Integration gateways → Audit & reporting, which maps exactly
-    // to Administration → Integrations → Audit & Oversight → Architecture & Flows
-    // (`/modules` is FC-12 §19, the flow's last step, after `/reports` §18).
-    //
-    // One residual inversion is unfixable and is deliberately not chased: FC-12 §12
-    // `/integration-status` → §13 `/admin/integrations` wants Integrations ABOVE
-    // Administration, while §01 `/admin/settings` and §04–07 want the opposite.
-    // `/integration-status` appears twice in FC-12 (§02 HQ sync board, §12 gateway
-    // health board), so no linear order satisfies both. This move neither creates
-    // nor cures it.
-    portal: "superadmin",
-    label: "Integrations",
-    icon: Plug,
-    href: "/integration-status",
-    subItems: [
-      { label: "Integration Status", href: "/integration-status" }, //               FC-12 §02 / §12
-      { label: "RFID Integration", href: "/rfid-integration" }, //                    FC-12 §10
-      // Build-QA surface rather than a client-facing screen. It is listed rather
-      // than hidden because the audit rule for this rail is that every route under
-      // app/ appears in exactly one portal — an unlisted route is an unowned route.
-      { label: "QA Checklist (internal)", href: "/qa-checklist" },
     ],
   },
   {
@@ -796,33 +952,118 @@ const RAIL: NavBlock[] = [
       { label: "Reports & Dashboards", href: "/reports" }, //                         FC-12 §18
     ],
   },
+];
+
+/* =============================================================================
+ * OFF-RAIL ROUTES  ·  owned by a portal, deliberately absent from the nav
+ * -----------------------------------------------------------------------------
+ * The rail is for places you navigate TO. These are routes you are TAKEN to, and
+ * a nav slot for one is a category error rather than a convenience:
+ *
+ *   DRILL-IN     a screen that shows ONE record, entered by clicking that record
+ *                in a list. Its href has to name a fixture — `/awb/1` — so the
+ *                nav ends up advertising demo row #1 as though it were a place,
+ *                and arriving from the rail rather than from a row is what the
+ *                "Select an AWB to view channel detail" / "No task selected"
+ *                empty states are apologising for. The parent list is the entry
+ *                point; `parent` names it, and that link is the real navigation.
+ *   AUTH STATE   a screen the shell REDIRECTS you into. All four render outside
+ *                AppShell (LayoutClient skips it for them), so following one from
+ *                the rail drops the rail — a nav entry that dismantles the nav.
+ *                The pages stay on disk and are load-bearing: AuthGuard
+ *                router.replace()s to all three /auth/* routes, Header pushes
+ *                /login on sign-out, and three landing CTAs push /login.
+ *
+ * These are NOT unowned routes, and the distinction matters because the audit
+ * invariant is about ownership, not about nav slots: every route under app/ is
+ * either a rail entry or a registered off-rail route with a named parent, and
+ * exactly one portal owns it either way. Both arrays feed the route → portal
+ * index below on the same footing as RAIL, which is what keeps the header
+ * naming "Warehouse Portal" on `/awb/[awbId]` — the `/awb` matchPrefix that
+ * maps every id lives here now, and nowhere else.
+ * ===========================================================================*/
+
+export interface OffRailRoute extends NavLeaf {
+  /** The portal that owns this route even though it holds no rail slot. */
+  portal: PortalId;
+  /**
+   * The screen (or shell mechanism) you arrive from. A route may leave the rail
+   * only if something else navigates to it, so this field is the thing that makes
+   * removal safe rather than orphaning.
+   */
+  parent: string;
+  /** Why it is not a nav item. */
+  why: string;
+}
+
+export const DRILL_IN: OffRailRoute[] = [
   {
-    portal: "superadmin",
-    label: "Architecture & Flows",
-    icon: Network,
-    href: "/modules",
-    subItems: [
-      { label: "Module Map", href: "/modules" }, //                                   FC-12 §19 — the last node in that flow
-      { label: "Flow Walkthroughs", href: "/flows/FC-01", matchPrefix: "/flows" }, //  the flow views themselves — no flow step
-    ],
+    label: "AWB Hub — M03",
+    href: "/awb/1",
+    matchPrefix: "/awb",
+    portal: "warehouse",
+    parent: "/warehouse-manager",
+    why: "One AWB, opened from the AWB# column of the Live AWB Queue on the warehouse dashboard (and from the AWB Register at /warehouse-manager/awb-detail). It is the target of nineteen flow steps across FC-02, FC-03, FC-07, FC-08 and FC-09, every one of them a drill-in reference — see UPWARD_REFERENCES. `/awb/1` is the demo's first fixture AWB, which is exactly why it is not a destination: the rail cannot offer 'the' AWB. `matchPrefix` keeps every /awb/* id mapped to this portal for the header.",
   },
   {
-    // These four render outside the app shell (LayoutClient skips AppShell for
-    // them), so following one of these links leaves the rail behind. They are
-    // listed anyway because they are real, owned routes and because the demo is
-    // frequently walked through each auth state on purpose.
-    portal: "superadmin",
-    label: "Access & Session",
-    icon: KeyRound,
-    href: "/login",
-    subItems: [
-      { label: "Sign In", href: "/login" },
-      { label: "Session Expired", href: "/auth/session-expired" },
-      { label: "Permission Denied", href: "/auth/permission-denied" },
-      { label: "No Access", href: "/auth/no-access" },
-    ],
+    label: "Channel Detail",
+    href: "/customs/channel-detail",
+    matchPrefix: "/customs/channel-detail",
+    portal: "warehouse",
+    parent: "/customs/channels",
+    why: "FC-06 §05-G / §05-Y / §05-R, the working surface for ONE declaration's channel. Channels & OOC is the §04 viewer that lists them and is the entry point. The real screen is now /customs/channel-detail/[awbId], reached from the row links on /customs/channels; the bare path kept here redirects there via its parent list, because nine flow-step hrefs in lib/architecture.ts still name it and have to land on something real. `matchPrefix` is what maps the dynamic children to this portal — without it portalForPath returns null for /customs/channel-detail/2 and the header falls back to 'AirVault'.",
+  },
+  {
+    label: "Task Detail",
+    href: "/lifter-operator/task-detail",
+    matchPrefix: "/lifter-operator/task-detail",
+    portal: "warehouse",
+    parent: "/lifter-operator/tasks",
+    why: "FC-15 §04 / §06–09, one lifter task. My Tasks (§03) is the queue it is opened from. The real screen is now /lifter-operator/task-detail/[taskId], reached from the task cards on /lifter-operator/tasks and from /lifter-operator/rfid-scan; the bare path redirects to the queue. `matchPrefix` maps the dynamic children to this portal, for the same reason as Channel Detail above.",
+  },
+  {
+    label: "Airmail Dispatch Record — M26",
+    href: "/airmail/3",
+    matchPrefix: "/airmail",
+    portal: "warehouse",
+    parent: "/airmail",
+    why: "ONE postal dispatch, opened from a row of the dispatch register. It carries five FC-18 steps — §02 delivery bill (PO of origin / destination / mail type), §03 receptacles weighed, §04 the gross-vs-physical variance strip, §09 dutiable items presented, §11 the handover panel — and every one of them is a panel on a single record, which is precisely what has no rail position: the rail cannot offer 'the' dispatch. `/airmail/3` is the fixture lib/architecture.ts names at §02–04 and §09 (§11 names /airmail/1, a terminating dispatch), and the register above is the entry point for both. `matchPrefix` is '/airmail' because a dispatch id is the only thing distinguishing these paths and no narrower prefix exists — the four static siblings (/airmail, /airmail/irregularities, /airmail/segregation, /airmail/transfer-manifest) are all EXACT keys in ROUTE_PORTAL, and portalForPath consults the exact map before the prefix list, so the prefix never decides their portal. Without it portalForPath returns null for /airmail/3 and the header renders 'AirVault' instead of 'Warehouse Portal' — the regression this file has already taken twice.",
   },
 ];
+
+export const AUTH_STATES: OffRailRoute[] = [
+  {
+    label: "Sign In",
+    href: "/login",
+    portal: "superadmin",
+    parent: "components/Header.tsx (sign-out) · landing-page CTAs",
+    why: "Live application state, not a demo screen. Header pushes here on sign-out and three landing CTAs push here. Renders outside AppShell, so a rail entry would be a nav link that removes the nav.",
+  },
+  {
+    label: "Session Expired",
+    href: "/auth/session-expired",
+    portal: "superadmin",
+    parent: "components/auth/AuthGuard.tsx (router.replace)",
+    why: "A guard redirect target. You are sent here; you do not choose it from a menu.",
+  },
+  {
+    label: "Permission Denied",
+    href: "/auth/permission-denied",
+    portal: "superadmin",
+    parent: "components/auth/AuthGuard.tsx (router.replace)",
+    why: "A guard redirect target. Listing it offers 'go and be denied' as a destination.",
+  },
+  {
+    label: "No Access",
+    href: "/auth/no-access",
+    portal: "superadmin",
+    parent: "components/auth/AuthGuard.tsx (router.replace)",
+    why: "A guard redirect target, for an authenticated user whose role owns no portal.",
+  },
+];
+
+/** Every owned route that holds no rail slot, in one list for the audit. */
+const OFF_RAIL: OffRailRoute[] = [...DRILL_IN, ...AUTH_STATES];
 
 /* -----------------------------------------------------------------------------
  * ROUTE → PORTAL index.
@@ -832,6 +1073,11 @@ const RAIL: NavBlock[] = [
  * and it had drifted badly — every /import/*, /customs/* and /billing/* route
  * was missing from it and fell through to "Home". Deriving it here means the
  * header can never disagree with the sidebar about which portal you are in.
+ *
+ * OFF_RAIL is folded in on the same footing, because ownership is not the same
+ * question as nav placement. Leaving it out would silently un-map every /awb/*
+ * route the moment the AWB hub left the rail, and AppShell would title the hub
+ * "AirVault" instead of "Warehouse Portal".
  * -------------------------------------------------------------------------- */
 const ROUTE_PORTAL = new Map<string, PortalId>();
 const PREFIX_PORTAL: { prefix: string; portal: PortalId }[] = [];
@@ -842,6 +1088,11 @@ for (const block of RAIL) {
     ROUTE_PORTAL.set(entry.href, block.portal);
     if (entry.matchPrefix) PREFIX_PORTAL.push({ prefix: entry.matchPrefix, portal: block.portal });
   }
+}
+
+for (const route of OFF_RAIL) {
+  ROUTE_PORTAL.set(route.href, route.portal);
+  if (route.matchPrefix) PREFIX_PORTAL.push({ prefix: route.matchPrefix, portal: route.portal });
 }
 
 /** The portal that owns `pathname`, or `null` for a route no portal claims. */
@@ -864,13 +1115,23 @@ export default function Sidebar({ collapsed, onToggle, onMobileClose }: SidebarP
   const pathname = usePathname();
 
   /**
+   * THE AUDIT INVARIANT, in the form that survives routes leaving the rail:
+   * every route under app/ is owned exactly once — either as a rail entry, or as
+   * an OFF_RAIL route (DRILL_IN / AUTH_STATES) that names the parent it is
+   * entered from. Nothing is unowned, and nothing is owned twice.
+   *
    * Matching is EXACT, not prefix-based, with `matchPrefix` as the single opt-in
-   * escape hatch for the two dynamic routes. Prefix matching used to be needed
-   * because the rail was incomplete — an unlisted child route had to light up
-   * its nearest listed ancestor. Now that every route under app/ appears in the
-   * rail exactly once, prefix matching only causes false positives: it would
-   * light up the Finance "Tariff & Charges" block for every /finance-manager/*
-   * route, including the six that live in the block below it.
+   * escape hatch — used by no rail entry at all, only by the four DRILL_IN routes
+   * whose real screens live under a dynamic segment (`/awb/[awbId]`,
+   * `/customs/channel-detail/[awbId]`, `/lifter-operator/task-detail/[taskId]`,
+   * `/airmail/[dispatchId]`). Prefix matching used to be needed because the rail was incomplete
+   * and an unlisted child route had to light up its nearest listed ancestor.
+   * Under the invariant above, the routes that are absent from the rail are
+   * absent DELIBERATELY and have no ancestor they should light up — you drilled
+   * into a record, you did not enter a section — so prefix matching would only
+   * cause false positives: it would light up the Finance "Tariff & Charges"
+   * block for every /finance-manager/* route, including the six that live in the
+   * block below it.
    */
   const hits = (item: NavLeaf) =>
     pathname === item.href ||
@@ -879,8 +1140,9 @@ export default function Sidebar({ collapsed, onToggle, onMobileClose }: SidebarP
 
   /**
    * Takes the structural shape rather than `NavBlock` so it can render HOME,
-   * which deliberately has no portal. Keyed on href because the audit
-   * guarantees every route appears in the rail exactly once.
+   * which deliberately has no portal. Keyed on href because the audit guarantees
+   * no route appears in the rail twice — routes may be absent from it, via
+   * DRILL_IN / AUTH_STATES, but never duplicated within it.
    */
   const renderBlock = (block: NavLeaf & {
     icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;

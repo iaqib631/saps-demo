@@ -683,7 +683,7 @@ export interface ExportWarehousing {
  *
  * FC-11's most consequential loop, and the one most easily missed: the
  * "Payload compatibility with Flight" diamond has a **No** edge that goes
- * back to 09 Export Warehousing, annotated "Can be offloaded depending
+ * back to §17 export warehousing, annotated "Can be offloaded depending
  * upon weight provision". Cargo that has passed every gate — screened,
  * sealed, cleared, built — can still come off the aircraft for payload,
  * and it re-enters at warehousing rather than dropping out of the flow.

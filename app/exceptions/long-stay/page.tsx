@@ -712,12 +712,6 @@ export default function LongStayPage() {
                 >
                   Aging dashboard <ArrowUpRight size={12} />
                 </Link>
-                <Link
-                  href="/flows/FC-10"
-                  className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B4F8B] no-underline hover:underline"
-                >
-                  FC-10 walkthrough <ArrowUpRight size={12} />
-                </Link>
               </div>
 
               <AuditStrip record={c} />

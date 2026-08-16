@@ -55,14 +55,32 @@ export type LifecycleStage =
   | "customs" //           FC-01 §19     clearance tracking
   | "charged" //           FC-01 §20–21  charges + invoice
   /**
-   * FC-01 §22a — the CHA requests the DO once the NOA has gone out. A
-   * requested DO carries no release authority; it only records who asked
-   * and against which NOA. §22b below is the terminal's issuance, and it
-   * is gated on payment plus the five release conditions — which is why
-   * the two are separate stages rather than one "delivery order" step.
+   * FC-01 §22 — the terminal ISSUES the DO, gated on payment plus the
+   * release conditions that `evaluateReleaseGate()` enforces. It is the
+   * spine act of the DO split and the only DO event that is a state of the
+   * AWB, so it is the only one with a stage.
+   *
+   * There is no `do-requested` stage above it any more. That stage read
+   * FC-01 §22a as "the CHA requests the DO once the NOA has gone out", and
+   * that reading is retired: §22a is now the CHA COLLECTING the DO the
+   * terminal has already issued, and a collection cannot precede the
+   * issuance it collects. The ref §22b — which numbered the issuance back
+   * when the request was drawn first — is retired outright; issuance takes
+   * the bare parent §22.
+   *
+   * Collection does not inherit the vacated stage either. This union is
+   * FC-01's steps COLLAPSED to the states a record can be in, so lettered
+   * sub-steps that are not states of the AWB have never had one: §14a and
+   * §21a have no stage here for the same reason. Both DO half-events are
+   * already modelled where they belong, on the record itself — collection
+   * as `DeliveryOrder.status = "collected"` and the pre-issuance half as
+   * `status = "requested"` (finance.ts, which states that FC-01 numbers no
+   * request step). A stage for either would be a second, contradicting
+   * source of truth: `status` is derived from the AWB reaching `gate-pass`,
+   * so an AWB parked on a `do-collected` stage would carry a DO still
+   * reading "issued".
    */
-  | "do-requested" //      FC-01 §22a    CHA requests the DO (after §18 NOA)
-  | "do-issued" //         FC-01 §22b    terminal issues it — payment + release gate
+  | "do-issued" //         FC-01 §22     terminal issues it — payment + release gate
   | "gate-pass" //         FC-01 §23
   | "dispatched" //        FC-01 §24
   | "delivered" //         FC-01 §25–26  POD + DLV
@@ -81,7 +99,6 @@ export const LIFECYCLE_ORDER: LifecycleStage[] = [
   "notified",
   "customs",
   "charged",
-  "do-requested",
   "do-issued",
   "gate-pass",
   "dispatched",
@@ -102,7 +119,6 @@ export const LIFECYCLE_LABEL: Record<LifecycleStage, string> = {
   notified: "Notified (NOA)",
   customs: "Customs",
   charged: "Charged",
-  "do-requested": "DO Requested",
   "do-issued": "DO Issued",
   "gate-pass": "Gate Pass",
   dispatched: "Dispatched",
@@ -124,8 +140,7 @@ export const LIFECYCLE_FC01_STEPS: Record<LifecycleStage, string> = {
   notified: "17–18",
   customs: "19",
   charged: "20–21",
-  "do-requested": "22a",
-  "do-issued": "22b",
+  "do-issued": "22",
   "gate-pass": "23",
   dispatched: "24",
   delivered: "25–26",
@@ -526,17 +541,31 @@ export interface HouseAWB extends DomainRecord {
  * without anything typed behind it. Only the two columns below are modelled
  * here, because only these two arrived with their names and types verified
  * against the schema restore. The remaining eleven — including whatever
- * column carries the link back to the parent house — are deliberately
+ * column carries the link back to the parent house — were deliberately
  * absent rather than guessed: a column name invented here would travel onto
  * a screen as a `cmts="…"` parity marker and read as verified migration
- * mapping when it is nothing of the kind. Add them when the verbatim column
- * list lands; a wrong name is worse than a missing one.
+ * mapping when it is nothing of the kind. A wrong name is worse than a
+ * missing one.
+ *
+ * THE VERBATIM LIST HAS SINCE LANDED, so the remaining eleven can now be
+ * added without guessing. In table order:
+ *
+ *     HWBDetailID · IGMNO · AWBNO · HWBNO · HWBID · CargoClassID ·
+ *     CaegoSubClassID · LocationId · TotalPcs · GrossWeight ·
+ *     ChargeWeight · Contents · UniqueIndentification
+ *
+ * `HWBID` is the link back to the parent house the note above could not
+ * name. `CaegoSubClassID` is a third distinct CMTS misspelling on this one
+ * table — Caego, not Cargo — so it must be reproduced exactly if added.
+ * Extending the interface is left as its own change rather than folded into
+ * a naming fix, because each new column needs a fixture value and a screen
+ * that means something, not just a type.
  */
 export interface AWBConsolDetail {
-  /** CMTS `GROSSWEIGHT` float, nullable — gross vs the chargeable weight. */
-  GROSSWEIGHT: number | null;
+  /** CMTS `GrossWeight` float, nullable — gross vs the chargeable weight. */
+  GrossWeight: number | null;
   /**
-   * CMTS `UNIQUEINDENTIFICATION` varchar(50), nullable.
+   * CMTS `UniqueIndentification` varchar(50), nullable.
    *
    * The misspelling is the column name. CMTS spells it INDENTIFICATION —
    * with the extra N — on this table, while `AWBCONSOLE`, `AWBSplit` and the
@@ -544,8 +573,14 @@ export interface AWBConsolDetail {
    * spellings are real and they are different columns on different tables,
    * so "correcting" this one silently breaks the migration mapping for the
    * table it belongs to. Keep it verbatim.
+   *
+   * The CASE was wrong here until the per-table parity audit: this table
+   * spells both of its modelled columns mixed-case, not uppercase. That is
+   * the same class of error as the retracted 41-field rename ticket — a name
+   * matched against the union of all CMTS columns rather than against the
+   * columns of the table that owns it.
    */
-  UNIQUEINDENTIFICATION: string | null;
+  UniqueIndentification: string | null;
 }
 
 export interface AWBSplitRecord {

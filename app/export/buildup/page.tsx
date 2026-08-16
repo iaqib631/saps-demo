@@ -64,14 +64,14 @@ const DISC_TONE: Record<string, { bg: string; fg: string }> = {
 /* ================================================================== *
  * Outbound messages — ported from /export-cargo/manifest-handover
  *
- * FC-11 §E10 is "FFM / FWB / FHL transmitted", and the canonical model
+ * FC-11 §19 is "Manifest / FFM / FWB / FHL messaging", and the canonical model
  * records it as `messagesSentAt` — one nullable timestamp — then links out
  * to `/messaging/iata`. Neither is a control. A timestamp is the record of a
  * send that already happened, and `/messaging/iata` is the shared IATA
  * console serving FC-01 §17, FC-04 §08 and FC-09 §05: it has no per-flight
  * outbound queue and nothing in it knows an export build-up exists. So
  * before this panel there was **no way to transmit anything from the export
- * side of the product at all** — the flow's own §E10 had no surface.
+ * side of the product at all** — the flow's own §19 had no surface.
  *
  * The messages are per FLIGHT, not per consignment, which is why the board
  * sits outside the master-detail above it. An FFM covers everything on the
@@ -220,7 +220,7 @@ export default function ExportBuildupPage() {
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="h-[18px] px-1.5 rounded bg-[#EBF0F7] text-[#0B2545] text-[10px] font-bold inline-flex items-center font-mono">
-              FC-11 §E09–E12
+              FC-11 §18–22
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
               PFM · Discrepancy Note · PSW export SD
@@ -320,7 +320,7 @@ export default function ExportBuildupPage() {
                     <PlaneTakeoff size={15} className="text-[#64748B]" />
                     <div>
                       <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                        Ramp handover gate — §E11
+                        Ramp handover gate — §22
                       </h3>
                       <p className="text-[11px] text-[#94A3B8]">
                         Five independently regulated conditions
@@ -548,12 +548,12 @@ export default function ExportBuildupPage() {
         </div>
       )}
 
-      {/* Ported from /export-cargo/manifest-handover — §E10, per flight. */}
+      {/* Ported from /export-cargo/manifest-handover — §19, per flight. */}
       {flight && (
         <div className="flex flex-col gap-4">
           <div>
             <h2 className="text-[16px] font-bold text-[#0F172A]">
-              Outbound message board — §E10
+              Outbound message board — §19
             </h2>
             <p className="text-[12px] text-[#64748B] mt-0.5">
               FFM, FWB and FHL are addressed to the flight, not to a consignment. Pick the flight,

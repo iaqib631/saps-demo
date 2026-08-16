@@ -713,10 +713,14 @@ export function DispatchPanel({ b }: { b: AwbBundle }) {
                 </div>
               </div>
             </div>
-            {/* FC-01 §22 is two events, so it renders as two fields. `requestedAt`
-                is the 22a request and has no CMTS column — it is an AirVault
-                addition. `DODATE` is the 22b issue date and stays null until the
-                release gate passes. */}
+            {/* FC-01 §22 is two events, so it renders as two fields. The second of
+                them is §22a, the CHA's collection, and it lives on the DO collection
+                screen linked above rather than in this block. What renders here
+                beside the issue date is `requestedAt` — when the record was raised.
+                That is a record state and not a numbered step: FC-01 numbers no
+                request, so it has no ref of its own, and no CMTS column either — it
+                is an AirVault addition. `DODATE` is the §22 issue date and stays
+                null until the release gate passes. */}
             <Field label="DO Requested" value={formatDate(doRec.requestedAt)} />
             <Field
               label="DO Issued"

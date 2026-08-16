@@ -3,21 +3,31 @@
  *
  * The sidebar is organised by persona, which is right for daily use but
  * makes a flow-based walkthrough impossible — FC-01 alone crosses eight
- * portals. This file gives the other two views:
+ * portals. This file holds the other two views as DATA:
  *
  *   • Module view    — FC-12's tiers and spines, with honest coverage
  *   • Flow walkthrough — each flowchart as an ordered list of screens
  *
+ * Both are data only now. The two screens that rendered them — the module
+ * map and the per-flow walkthrough — have been removed from the product,
+ * so nothing in app/ reads MODULES or FLOWS today. They are kept because
+ * they are the specification the rest of the build is checked against: the
+ * ordering rule below is stated over this data, not over any renderer.
+ *
  * FLOWS order is authoritative for navigation order: if step A links onward
  * to step B, B sits below A here and must sit below A in Sidebar.tsx. The
  * old "NOTHING IS DELETED" policy (Sidebar.tsx:70) is revoked — superseded
- * routes are deleted, not hidden, so every href below must resolve.
+ * routes are deleted, not hidden, so every non-null href below must resolve.
+ * A step whose screen does not exist carries `href: null` rather than a
+ * dead path; see FlowStep.href.
  *
  * Coverage is deliberately honest. A module that does not exist shows as
- * "not-started" rather than being quietly omitted — M26 Airmail is the
- * live example, three CMTS tables with no flowchart and no screen behind
- * them. FC-09 transhipment and FC-10-A mishandled cargo are no longer in
- * that category: both are built, and the coverage below says so.
+ * "not-started" rather than being quietly omitted, and a module that is
+ * built on modelled rather than cited column names shows as "partial" even
+ * though every screen it needs exists — M26 Airmail is the live example of
+ * the second case, and its gap note says exactly which parts are AirVault's.
+ * FC-09 transhipment and FC-10-A mishandled cargo are in neither category:
+ * both are built, and the coverage below says so.
  */
 
 export type Coverage = "built" | "partial" | "stub" | "not-started";
@@ -259,11 +269,17 @@ export const MODULES: ModuleDef[] = [
     code: "M26",
     name: "Airmail / Postal",
     tier: "tier2",
-    coverage: "not-started",
+    coverage: "partial",
     phase: "P9-6",
     flows: ["FC-18"],
-    screens: [],
-    gap: "Not built, and shown rather than omitted. Three CMTS tables — AIRMAILDELIVERYBILL (25 cols), AIRMAILTRANSFERMANIFEST (19), POMailType (3) — with no screen, no route and, until FC-18, no flowchart either. Two questions block it: BLK-01, there is no airmail rate in the tariff master, so charging under FC-07 versus contract-billing the Post Office is unresolved; and postal customs is not a Single Declaration regime, so FC-06 does not apply. FC-18 stays a specification until SAPS answer both.",
+    screens: [
+      { label: "Dispatch register — M26", href: "/airmail" },
+      { label: "Dispatch record (AV7, receptacles, §04 variance)", href: "/airmail/3" },
+      { label: "Irregularities — CN-43", href: "/airmail/irregularities" },
+      { label: "Segregation & zones", href: "/airmail/segregation" },
+      { label: "Transfer manifests", href: "/airmail/transfer-manifest" },
+    ],
+    gap: "Built under decision Q2, and 'partial' rather than 'built' for three honest reasons, not for missing screens. (1) PROVENANCE: no report in this repo lists the columns of AIRMAILDELIVERYBILL, AIRMAILTRANSFERMANIFEST or POMailType — only their counts (25 / 19 / 3) and seven named concepts (dispatch no, AV7 no, PO origin/destination, mail type, loose-parcels gross/physical weight, irregularity). Every other CMTS column name in lib/domain/airmail.ts is modelled to hit those counts and renders with a trailing '?' on screen so a reader can see which names SAPS still have to confirm. (2) TWO STEPS DELIBERATELY UNBUILT: §10 is BLK-01 — no airmail rate exists in the tariff master, so tariff-versus-Post-Office-contract cannot be screened without inventing a rate; §12 closure folds into M20. (3) THREE RULES WITH NO CMTS COLUMN BEHIND THEM, all stated on screen rather than buried: the 1.5% weight tolerance floored at 1.5 kg at §04 (CMTS has only the two weights and a free-text IRREGULARITY varchar(40), with nothing saying when to write it), the seeded UPU mail-type list (POMailType is empty), and the mail-type → zone rule (CARGOSUBCLASSLOCATION carries no postal rule, which is why FC-03 cannot allocate airmail). Also open: POORIGIN and PODESTINATIONs are ints pointing at an office-of-exchange table that does not exist in the 105, so the migration cannot resolve them from CMTS alone; and MailIrregularity.cdrRef is null because CDR still requires an AWB, which FC-18's own amendment says airmail irregularities should eventually use.",
   },
 
   // ---- Messaging spine ----
@@ -560,9 +576,11 @@ export const FLOWS: FlowDef[] = [
     // (This comment read "(15–18)" and "(11–14)" for those two tracks and
     // matched no numbering this file has ever held; it is corrected here.)
     //
-    // Array order below IS ref order, and both are the reading order:
-    // app/flows/[flowId]/page.tsx walks this array and prints each ref badge
-    // in sequence. A ref that jumps backwards is a defect, not a variation —
+    // Array order below IS ref order, and both are the reading order. The
+    // flow-walkthrough renderer that used to walk this array and print each
+    // ref badge in sequence has been removed, but the ordering rule is not
+    // the renderer's — it is the flow's, and it still holds for every reader
+    // of this data. A ref that jumps backwards is a defect, not a variation —
     // if a step has to move, it is renumbered in the same pass, and every
     // citation of its old number is repaired with it.
     steps: [
@@ -750,7 +768,7 @@ export const FLOWS: FlowDef[] = [
       { lane: "Instruction loop", ref: "F2", label: "Adjust pieces / weight", href: "/exceptions/cdr", module: "M06", note: "Closes inside FC-04 — the adjusted basis re-drives the FC-07 charge." },
       { lane: "Instruction loop", ref: "F3", label: "Forward as mishandled → FC-10-A", href: "/exceptions/mishandled", module: "M17" },
       { lane: "Instruction loop", ref: "F4", label: "Re-export → FC-10-B", href: "/exceptions/re-export", module: "M16" },
-      { lane: "Instruction loop", ref: "F5", label: "Claim / liability process", href: "/exceptions/cdr", module: "M06", note: "No demo module — carrier liability claims are flagged on the module map." },
+      { lane: "Instruction loop", ref: "F5", label: "Claim / liability process", href: "/exceptions/cdr", module: "M06", note: "No demo module — carrier liability claims are recorded as a coverage gap against M06, not built." },
 
       { lane: "Closure", ref: "12", label: "Close CDR", href: "/exceptions/cdr", module: "M06", note: "Gated: evidence measured, airline notified, DIS sent, instruction received, final action selected. Closing short of that is abandonment, not resolution." },
     ],
@@ -1053,11 +1071,41 @@ export const FLOWS: FlowDef[] = [
       { lane: "Integration gateways", ref: "10", label: "RFID / scanner estate", href: "/rfid-integration", module: "M05" },
       /*
        * §11 named two gateways and hrefed at one. The payment gateway is a
-       * separate external system with its own screen, so it becomes §11-P and
-       * §11 narrows to the ERP bridge it actually points at.
+       * separate external system with its own screen, so the node splits: §11-P
+       * payment, §11-E ERP bridge. No bare §11 survives the split.
+       *
+       * That last part is the fix, and it is deliberately NOT the shape FC-01
+       * §22 / §22a settled on. Both were called "a split of one step", but they
+       * split along different axes:
+       *
+       *   FC-01 §22 → §22/§22a is one act divided in TIME. Issuance and
+       *   collection are the same DO; collection cannot happen until issuance
+       *   has, so the second half is genuinely subordinate and the plain-letter
+       *   suffix says so — "subordinate to the numbered step above me", as at
+       *   §14a, §21a and §17a. Parent first, child after.
+       *
+       *   §11 → §11-P/§11-E is one node divided by SYSTEM. Payment and ERP are
+       *   two unrelated external estates that were only ever sharing a box on
+       *   the board; they are peers of §08 customs, §09 SITA and §10 RFID, and
+       *   neither is a sub-step of the other. Leaving one bare would have made
+       *   the surviving number read as a parent and the other as its child,
+       *   which is a relationship that does not exist here.
+       *
+       * So this follows the dash-qualifier convention this file already uses
+       * for peer branches — FC-06 §05-G / §05-Y / §05-R / §05-C, where the old
+       * §05 likewise split into named peers and left no bare §05 behind, and
+       * FC-03 §B-COL, FC-06 §08a-K. The dash carries a mnemonic (P payment,
+       * E ERP), not an ordinal.
+       *
+       * On the ascension walk the two now read as equal leading integers —
+       * 10, 11, 11, 12 — which is flat, not a descent, and is exactly how the
+       * four consecutive §05s in FC-06 already read. The order is untouched:
+       * payment settles before it is journalled, so payment above ERP was
+       * always right. Only the refs were wrong. Do not reopen this as an
+       * FC-01 inconsistency — it is a different relationship, not a missed one.
        */
-      { lane: "Integration gateways", ref: "11-P", label: "Payment gateway — providers, webhook capture, invoice matching, settlement, refunds", href: "/finance-manager/payment-gateway-reconciliation", module: "M11", note: "Six providers — HBL, Meezan, NIFT, Easypaisa, JazzCash, 1LINK. FC-07 §13a is the reconciliation this gateway feeds." },
-      { lane: "Integration gateways", ref: "11", label: "ERP bridge", href: "/finance-manager/erp-bridge-mapping", module: "M25", note: "The ERP bridge had no owning flow; FC-17 picks it up and M25 owns it. The payment gateway it used to share this node with is §11-P." },
+      { lane: "Integration gateways", ref: "11-P", label: "Payment gateway — providers, webhook capture, invoice matching, settlement, refunds", href: "/finance-manager/payment-gateway-reconciliation", module: "M11", note: "Six providers — HBL, Meezan, NIFT, Easypaisa, JazzCash, 1LINK. FC-07 §13a is the reconciliation this gateway feeds. Peer of §11-E, not its parent." },
+      { lane: "Integration gateways", ref: "11-E", label: "ERP bridge", href: "/finance-manager/erp-bridge-mapping", module: "M25", note: "The ERP bridge had no owning flow; FC-17 picks it up and M25 owns it. The payment gateway it used to share this node with is §11-P; this half was cited as a bare §11 until the numbering pass, and that ref is retired." },
       { lane: "Integration gateways", ref: "12", label: "Integration health board — every gateway, last sync, failures", href: "/integration-status", module: "M20" },
       { lane: "Integration gateways", ref: "13", label: "Admin integration configuration", href: "/admin/integrations", module: "M20" },
 
@@ -1073,7 +1121,7 @@ export const FLOWS: FlowDef[] = [
        */
       { lane: "Audit & reporting", ref: "17a", label: "Audit evidence pack generated and exported — cargo timeline, financial timeline, RBAC snapshot, evidence, event logs", href: "/auditor/export-centre", module: "M20" },
       { lane: "Audit & reporting", ref: "18", label: "Reports & dashboards", href: "/reports", module: "M19" },
-      { lane: "Audit & reporting", ref: "19", label: "Module map — 26 modules against FC-01…FC-18", href: "/modules", module: "M19" },
+      { lane: "Audit & reporting", ref: "19", label: "Module map — 26 modules against FC-01…FC-18", href: null, module: "M19", note: "The module map screen was removed from the product; the coverage data it rendered still lives in MODULES above, so the step is real but has no screen." },
     ],
   },
   {
@@ -1219,24 +1267,24 @@ export const FLOWS: FlowDef[] = [
   {
     id: "FC-18",
     title: "Airmail / Postal",
-    subtitle: "Dispatch receipt, transfer manifest and delivery bill — specification, not transcription",
+    subtitle: "Dispatch receipt, transfer manifest and delivery bill — built, with the two unanswerable steps left unbuilt",
     docNo: "SAPS-ACMS-FC-18",
-    rev: "Rev 1.0",
+    rev: "Rev 1.1",
     amendment:
-      "Airmail has three CMTS tables and no flowchart. AIRMAILDELIVERYBILL (25 columns), AIRMAILTRANSFERMANIFEST (19) and POMailType (3) carry dispatch number, AV7 number, PO of origin and destination, mail type, loose-parcels gross and physical weight and an irregularity field, and none of it is reachable from FC-01 through FC-12 or from any screen in the demo — every step below has a null href because nothing implements it. Three things this flow has to settle rather than inherit. First, gross-versus-physical weight on loose parcels is the same declared-versus-physical variance FC-01 raises a CDR for, and the airmail irregularity column is a second parallel record of the same fact; one has to win, and the AirVault position is that airmail irregularities are raised through the FC-04 CDR mechanism with the dispatch number as the entity, not through a free-text column nobody can report on. Second, postal customs is not FC-06 — dutiable postal items do not travel on a Single Declaration, so that node is drawn as an open branch pending SAPS rather than wired into the PSW gateway. Third, there is no airmail rate in the tariff master, so whether a dispatch is charged under FC-07 or billed under a Post Office contract is unresolved and is drawn as a decision, not assumed away. This is BLK-01 in the build plan, parked at P9-6, and it stays a specification until SAPS confirm the regime. M26 sits in FC-12 Tier 2 — Core Processing, since it is a distinct cargo type processed end to end, borrowing M13 gate pass and M14 POD only at the tail.",
+      "Airmail has three CMTS tables and no flowchart. AIRMAILDELIVERYBILL (25 columns), AIRMAILTRANSFERMANIFEST (19) and POMailType (3) carry dispatch number, AV7 number, PO of origin and destination, mail type, loose-parcels gross and physical weight and an irregularity field. Rev 1.0 of this flow had a null href on every step; decision Q2 in CMTS_SCOPE_DECISIONS.md confirmed airmail in scope and Rev 1.1 builds it — ten of the twelve steps now resolve, across a dispatch register, a dispatch record, a CN-43 irregularity register, a segregation board and a transfer register. Three things this flow had to settle rather than inherit. First, gross-versus-physical weight on loose parcels is the same declared-versus-physical variance FC-01 raises a CDR for, and the airmail irregularity column is a second parallel record of the same fact; one has to win, and the AirVault position remains that airmail irregularities belong on the FC-04 CDR mechanism with the dispatch number as the entity. That position is unmet, not abandoned: CDR requires awbId, AWBNO and IGMNO, and a postal dispatch has no air waybill, so §05 is built as a CN-43 verification note with a lifecycle and MailIrregularity.cdrRef is carried as an explicit null with the reason recorded. Second, postal customs is not FC-06 — dutiable postal items travel on a CN-22 / CN-23 attached to the item and never on a Single Declaration, so §09 is drawn as an open branch and the model types singleDeclarationNo as the literal null so the point cannot be edited away. Third, there is no airmail rate in the tariff master, so §10 stays null: BLK-01 is not answerable without inventing a rate, and an invented rate mistaken for SAPS's is the one failure the scope decisions single out as capable of real harm. §12 stays null because closure folds into M20. ONE CAVEAT THAT OUTLIVES THE BUILD: the reports give these three tables' column COUNTS and seven of their concepts, never their column names, so most CMTS column names on the airmail screens are AirVault's model of what the column is probably called. They render with a trailing '?' to say so, and the counts match either way. M26 sits in FC-12 Tier 2 — Core Processing, since it is a distinct cargo type processed end to end, borrowing M13 gate pass and M14 POD only at the tail.",
     steps: [
-      { ref: "01", label: "Mail received off the flight against the AV7 delivery bill", href: null, module: "M26", note: "AIRMAILDELIVERYBILL, 25 columns — dispatch no, AV7 no. Not built; no route exists." },
-      { ref: "02", label: "Dispatch identified — PO of origin, PO of destination, mail type", href: null, module: "M26", note: "POMailType is a three-column lookup; the code list itself has to come from SAPS before this node is buildable." },
-      { ref: "03", label: "Receptacles counted and weighed — loose-parcels gross vs physical weight", href: null, module: "M26", note: "Both weights are CMTS columns on the delivery bill; capturing one without the other makes the variance check impossible." },
-      { ref: "04", label: "Gross vs physical variance beyond tolerance?", href: null, module: "M26", decision: true, note: "Structurally identical to FC-01/FC-02 declared-vs-physical. Raised through the FC-04 CDR mechanism with the dispatch number as the entity, not as a private airmail exception type." },
-      { ref: "05", label: "Irregularity recorded against the dispatch", href: null, module: "M26", note: "CMTS carries its own irregularity column; running it alongside a CDR would give two records of one fact. One of the two must be the source — the AirVault position is the CDR." },
-      { ref: "06", label: "Mail segregated and stored by mail type", href: null, module: "M26", note: "No mail-type → zone rule exists in CARGOSUBCLASSLOCATION, so FC-03 cannot allocate airmail today." },
-      { ref: "07", label: "Onward leg required?", href: null, module: "M26", decision: true, note: "The Yes edge is airmail's own transfer path and does not reuse the FC-09 bonded transhipment register." },
-      { ref: "08", label: "Transfer manifest raised to the receiving carrier or station", href: null, module: "M26", note: "AIRMAILTRANSFERMANIFEST, 19 columns. Not built." },
-      { ref: "09", label: "Dutiable postal items presented to customs", href: null, module: "M26", decision: true, note: "Open branch — not FC-06. Postal items do not travel on a Single Declaration, so the PSW / WeBOC gateway does not apply and the regime needs SAPS confirmation." },
-      { ref: "10", label: "Chargeable under the tariff, or contract-billed to the Post Office?", href: null, module: "M26", decision: true, note: "BLK-01 — no airmail rate exists in the tariff master and P9-6 is parked pending SAPS." },
-      { ref: "11", label: "Delivery bill signed at handover to Pakistan Post", href: null, module: "M26", note: "The airmail equivalent of FC-08's POD; whether it reuses the digital POD pack (signature, CNIC, geo, photo) is a decision for SAPS, not an assumption." },
-      { ref: "12", label: "Dispatch closed and archived", href: null, module: "M26", note: "Closure and archive would fold into M20 once the module exists; today there is nothing to close." },
+      { ref: "01", label: "Mail received off the flight against the AV7 delivery bill", href: "/airmail", module: "M26", note: "The dispatch register — what came off which flight, against which AV7. AIRMAILDELIVERYBILL is modelled at 24 of its 25 columns (the surrogate Id is excluded). Deliberately not an AWB list: no air waybill number, no consignee, no piece count, because a postal dispatch has none of them." },
+      { ref: "02", label: "Dispatch identified — PO of origin, PO of destination, mail type", href: "/airmail/3", module: "M26", note: "The delivery-bill panel on the dispatch record, where POORIGIN / PODESTINATIONs / MailType resolve against the office-of-exchange and mail-type lookups. POORIGIN and PODESTINATIONs are ints pointing at a table that does not exist anywhere in the 105 — a real migration finding, so AirVault models the office itself and keys on the UPU office-of-exchange code. POMailType is empty, so the UPU category list is seeded and SAPS still own which ones Karachi handles." },
+      { ref: "03", label: "Receptacles counted and weighed — loose-parcels gross vs physical weight", href: "/airmail/3", module: "M26", note: "The receptacle table on the dispatch record. CMTS records Packages and Weight on the bill and nothing beneath them, so a legacy short dispatch could say the total was short but never which receptacle was — the per-receptacle tag-versus-scale line is an AirVault addition, and is what §05 needs to name units rather than a total." },
+      { ref: "04", label: "Gross vs physical variance beyond tolerance?", href: "/airmail/3", module: "M26", decision: true, note: "The variance strip on the dispatch record — delta, tolerance, absolute floor and remaining headroom, shown whether or not it trips. CMTS has no tolerance column at all, so the 1.5% (floored at 1.5 kg) is AirVault's and is stated on screen as such. Structurally the same question as FC-01/FC-02 declared-vs-physical, but tighter, because a dispatch is weighed against CN-35 tags written at the despatching office rather than against a declared AWB gross." },
+      { ref: "05", label: "Irregularity recorded against the dispatch", href: "/airmail/irregularities", module: "M26", note: "Built as a CN-43 verification note with a lifecycle — raised, office of exchange notified, carrier notified, instruction received, closed — with the legacy IRREGULARITY varchar(40) rendered beside it, derived from the record and truncated to its real width. The FC-04 CDR position is unchanged and unmet: CDR requires awbId / AWBNO / IGMNO and a postal dispatch has no air waybill, so MailIrregularity.cdrRef is null with that reason recorded rather than the intent being quietly dropped." },
+      { ref: "06", label: "Mail segregated and stored by mail type", href: "/airmail/segregation", module: "M26", note: "The zone board, plus the mail-type → zone rule stated as six rows. CARGOSUBCLASSLOCATION carries no postal rule, so all six are AirVault's and are on screen for SAPS to correct rather than buried in an allocator." },
+      { ref: "07", label: "Onward leg required?", href: "/airmail/transfer-manifest", module: "M26", decision: true, note: "The Yes edge is airmail's own transfer path and does not reuse the FC-09 bonded transhipment register. The gate is deliberately the same shape as FC-09's re-tender gate — every receptacle weighed, irregularity closed or instructed, dutiable items released, mail segregated, receiving carrier confirmed — so a reviewer who has read one recognises the other." },
+      { ref: "08", label: "Transfer manifest raised to the receiving carrier or station", href: "/airmail/transfer-manifest", module: "M26", note: "AIRMAILTRANSFERMANIFEST, all 19 columns, keyed on the five-column business key rather than a surrogate. AV7NO exists on this table and nowhere else, so a dispatch that terminates at its destination has no AV7 number anywhere in CMTS even though §01 receives the mail against that bill; AirVault carries it on the dispatch." },
+      { ref: "09", label: "Dutiable postal items presented to customs", href: "/airmail/3", module: "M26", decision: true, note: "The customs panel on the dispatch record, drawn as an open branch and not as FC-06. Postal items travel on a CN-22 / CN-23 attached to the item, never on a Single Declaration, so the PSW / WeBOC gateway does not apply — DutiablePresentation.singleDeclarationNo is typed as the literal null so an edit that tries to put an SD number on a dispatch fails to compile. The regime still needs SAPS confirmation." },
+      { ref: "10", label: "Chargeable under the tariff, or contract-billed to the Post Office?", href: null, module: "M26", decision: true, note: "STILL NULL, deliberately. BLK-01 — there is no airmail rate anywhere in the tariff master, so a screen here would have to invent one, and an invented rate mistaken for SAPS's is the one failure the scope decisions single out as capable of real harm. Left unbuilt rather than answered by fixture." },
+      { ref: "11", label: "Delivery bill signed at handover to Pakistan Post", href: "/airmail/1", module: "M26", note: "The handover panel on a terminating dispatch — Deliverdto and the handover time, and nothing more. The airmail equivalent of FC-08's POD; whether it reuses the digital POD pack (signature, CNIC, geo, photo) is a decision for SAPS, so the screen records a name and a time and stops there rather than assuming." },
+      { ref: "12", label: "Dispatch closed and archived", href: null, module: "M26", note: "STILL NULL, deliberately. Closure folds into M20 audit & archive when that module exists. A closed dispatch is already visible on the register as a stage, so a dedicated route would be a filter with a URL — worse than nothing, because it would imply archive is built." },
     ],
   },
 ];

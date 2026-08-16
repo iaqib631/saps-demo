@@ -1,17 +1,17 @@
 "use client";
 
 /**
- * FC-11 §E07–E08 · Classification, the 08a / 08b branch, and export
+ * FC-11 §15–17 · Classification, the §16a / §16b branch, and export
  * warehousing.
  *
  * The gap this closes: the demo went from screening straight to build-up.
- * FC-11 puts a decision in between — "08. Special Cargo?" — and the two
+ * FC-11 puts a decision in between — "§16. Special cargo?" — and the two
  * edges are not the same work:
  *
- *   Yes → 08a. Special Handling Verification (DGR / PER / AVI / VAL)
- *   No  → 08b. Normal Export Storage
+ *   Yes → §16a. Special Handling Verification (DGR / PER / AVI / VAL)
+ *   No  → §16b. General Export Storage
  *
- * 08a is a verification with a named verifier and a document behind each
+ * §16a is a verification with a named verifier and a document behind each
  * check. Treating it as a label on the consignment — which is what having
  * no screen amounts to — is how a DG shipment reaches a ULD with nobody
  * having confirmed the shipper's declaration exists.
@@ -23,7 +23,7 @@
  * **Ported in from the retired `/export-cargo/acceptance`** (see
  * PORTAL_AND_DEDUP_PLAN.md §2.1): the storage-allocation control — suggested
  * zone, override with a reason, and the bin action. The legacy screen drew it
- * on the acceptance form; FC-11 puts the put-away at E08, which is here.
+ * on the acceptance form; FC-11 puts the put-away at §17, which is here.
  */
 
 import { useMemo, useState } from "react";
@@ -156,7 +156,7 @@ export default function ExportWarehousingPage() {
               M16
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
-              FC-11 §E07–E08 · 08a / 08b
+              FC-11 §15–17 · §16a / §16b
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F5F3FF] text-[#7C3AED] text-[10px] font-bold inline-flex items-center font-mono">
               GREENFIELD
@@ -485,7 +485,7 @@ export default function ExportWarehousingPage() {
                             Returned here after an offload
                           </p>
                           <p className="text-[12px] text-[#92400E] mt-0.5">
-                            FC-11&rsquo;s payload decision sends cargo back to E08 rather than out
+                            FC-11&rsquo;s payload decision sends cargo back to §17 rather than out
                             of the flow — it is rebooked from here, not re-accepted.{" "}
                             <Link
                               href="/export/uplift"

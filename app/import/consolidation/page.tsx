@@ -54,7 +54,7 @@ const CMTS_SOURCE_TABLES = [
  *
  * Two things about this are deliberate and easy to "fix" wrongly.
  *
- * First, `GROSSWEIGHT` reads the house's own `WEIGHT`. The column exists on
+ * First, `GrossWeight` reads the house's own `WEIGHT`. The column exists on
  * the detail table precisely so the gross figure survives next to
  * `CHARGEDWEIGH` — volumetric uplift means the chargeable weight is routinely
  * the larger of the two, and once the master is broken down it is the gross
@@ -62,7 +62,7 @@ const CMTS_SOURCE_TABLES = [
  * second, *different* gross here would fabricate a house-level discrepancy
  * that no other fixture records and that no operator could resolve.
  *
- * Second, `UNIQUEINDENTIFICATION` carries the same correlator value as
+ * Second, `UniqueIndentification` carries the same correlator value as
  * `AWBCONSOLE.UniqueIdentification` under a different spelling. That is the
  * whole parity point: CMTS writes the extra N on this table and not on the
  * others, so the value travels and the column name does not. Screens that
@@ -75,8 +75,8 @@ const CMTS_SOURCE_TABLES = [
  */
 function consolDetailOf(h: HouseAWB): AWBConsolDetail {
   return {
-    GROSSWEIGHT: h.WEIGHT,
-    UNIQUEINDENTIFICATION: h.UniqueIdentification,
+    GrossWeight: h.WEIGHT,
+    UniqueIndentification: h.UniqueIdentification,
   };
 }
 
@@ -436,7 +436,7 @@ export default function ConsolidationPage() {
                   </th>
                   <th className="text-right px-4 py-2.5">
                     Gross weight{" "}
-                    <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">GROSSWEIGHT</span>
+                    <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">GrossWeight</span>
                   </th>
                   <th className="text-right px-4 py-2.5">
                     Chargeable{" "}
@@ -447,7 +447,7 @@ export default function ConsolidationPage() {
                   <th className="text-left px-4 py-2.5">
                     Correlator{" "}
                     <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">
-                      UNIQUEINDENTIFICATION
+                      UniqueIndentification
                     </span>
                   </th>
                 </tr>
@@ -457,15 +457,15 @@ export default function ConsolidationPage() {
                   const d = consolDetailOf(h);
                   // Volumetric uplift: the chargeable weight above the gross is
                   // the norm, not an error, so it is toned as information.
-                  const uplift = round2(h.CHARGEDWEIGH - (d.GROSSWEIGHT ?? h.CHARGEDWEIGH));
+                  const uplift = round2(h.CHARGEDWEIGH - (d.GrossWeight ?? h.CHARGEDWEIGH));
                   return (
                     <tr key={h.ConsolId} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
                       <td className="px-4 py-2.5 font-mono font-semibold">{h.HWB}</td>
                       <td className="px-4 py-2.5 text-right font-mono">
-                        {d.GROSSWEIGHT === null ? (
+                        {d.GrossWeight === null ? (
                           <span className="text-[#CBD5E1]">—</span>
                         ) : (
-                          formatKg(d.GROSSWEIGHT)
+                          formatKg(d.GrossWeight)
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-right font-mono">
@@ -477,7 +477,7 @@ export default function ConsolidationPage() {
                         )}
                       </td>
                       <td className="px-4 py-2.5 font-mono text-[12px] text-[#64748B]">
-                        {d.UNIQUEINDENTIFICATION ?? <span className="text-[#CBD5E1]">—</span>}
+                        {d.UniqueIndentification ?? <span className="text-[#CBD5E1]">—</span>}
                       </td>
                     </tr>
                   );
@@ -492,7 +492,7 @@ export default function ConsolidationPage() {
             have not been read off the schema restore are absent rather than guessed, and that
             includes the column carrying the link back to the parent house. Each line is therefore
             shown against the house it was built from, not against a key.{" "}
-            <span className="font-mono">UNIQUEINDENTIFICATION</span> spells the correlator with the
+            <span className="font-mono">UniqueIndentification</span> spells the correlator with the
             extra N because this table does; <span className="font-mono">UniqueIdentification</span>{" "}
             on the house above is a different column carrying the same value.
           </p>

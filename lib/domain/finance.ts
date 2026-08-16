@@ -468,20 +468,29 @@ export function waiverStatus(levels: ApprovalLevel[]): ApprovalDecision {
 /* ================================================================== *
  * Delivery Order — CMTS `AWBDELEIVERYORDER` (39), all columns
  *
- * FC-01 §22 is TWO events on one record, not one:
+ * FC-01 splits the DO across TWO events on one record, in this order:
  *
- *   22a  DO requested — by the CHA, after the NOA (§18) reaches them.
- *        A request carries no release authority whatsoever. It records
- *        intent and starts the clock on the terminal's side.
- *   22b  DO issued — by the terminal, only once charges are settled AND
- *        `evaluateReleaseGate` clears. Issuance snapshots that evaluation
- *        onto the record so an auditor can see which conditions were true
- *        at the moment authority was granted, rather than re-deriving them
- *        later against facts that have since moved.
+ *   22   DO issued — by the terminal, only once charges are settled AND
+ *        `evaluateReleaseGate` clears. This is the spine act of the split
+ *        and the half that carries release authority. Issuance snapshots
+ *        that evaluation onto the record so an auditor can see which
+ *        conditions were true at the moment authority was granted, rather
+ *        than re-deriving them later against facts that have since moved.
+ *   22a  DO collected — by the CHA / consignee, against the DO §22 has
+ *        already issued: a sub-step subordinate to it, and the same act
+ *        FC-02 §33 and FC-08 §01 draw. Collection grants nothing of its
+ *        own — it assigns a driver and a vehicle, and the cargo is released
+ *        at the gate-out re-check (FC-01 §24).
  *
- * Modelling them as one field is what let the pre-P0 demo show a "RELEASABLE
- * / n BLOCK" badge against a DO that had already been issued — a verdict on
- * an event that was over. Keep the two timestamps distinct.
+ * Collection cannot precede the issuance it collects, so FC-01 has no "DO
+ * requested" step: the earlier reading of the second half as an application
+ * the CHA raised off the NOA is retired, and so is the ref 22b that once
+ * numbered the issuing half. Issuance is §22 and collection is §22a.
+ *
+ * Modelling the two as one field is what let the pre-P0 demo show a
+ * "RELEASABLE / n BLOCK" badge against a DO that had already been issued — a
+ * verdict on an event that was over. Keep issuance's own timestamp and gate
+ * snapshot distinct from every other date on the record.
  * ================================================================== */
 
 export interface DeliveryOrder extends DomainRecord {
@@ -492,29 +501,31 @@ export interface DeliveryOrder extends DomainRecord {
   DONO: string;
   docNumber: DocNumberRef;
   /**
-   * Where the record stands between 22a and 22b, and after.
+   * Where the record stands against the §22 issuance, and after it.
    *
-   *   requested  22a done, 22b not — no release authority
-   *   issued     22b done — authority granted, gate snapshot present
-   *   collected  the CHA has taken it (FC-02 §33)
+   *   requested  raised but not yet issued — no release authority. A record
+   *              state only: FC-01 numbers no request step, so nothing on
+   *              the flow corresponds to it.
+   *   issued     FC-01 §22 done — authority granted, gate snapshot present
+   *   collected  FC-01 §22a — the CHA has taken it (also FC-02 §33, FC-08 §01)
    *   cancelled  withdrawn before or after issue
    */
   status: "requested" | "issued" | "collected" | "cancelled";
 
-  /* --- FC-01 §22a — requested by the CHA, after the NOA --- */
-  /** ISO — when the CHA raised the request. Always set; a DO record starts here. */
+  /* --- Pre-issuance particulars — a record state, not an FC-01 step --- */
+  /** ISO — when the record was raised. Always set; a DO record starts here. */
   requestedAt: string;
-  /** The CHA / agent who requested it. */
+  /** The CHA / agent the record stands in the name of. */
   requestedBy: string;
-  /** ISO of the NOA (§18) this request follows, when one was issued. */
+  /** ISO of the NOA (FC-01 §18) the record was raised after, when one was issued. */
   requestedAgainstNoaAt: string | null;
 
-  /* --- FC-01 §22b — issued by the terminal, after payment + release gate --- */
-  /** ISO — null until 22b. `DODATE` mirrors this for CMTS parity. */
+  /* --- FC-01 §22 — issued by the terminal, after payment + release gate --- */
+  /** ISO — null until §22. `DODATE` mirrors this for CMTS parity. */
   issuedAt: string | null;
-  /** Terminal user who issued it. Null until 22b. */
+  /** Terminal user who issued it. Null until §22. */
   issuedBy: string | null;
-  /** ISO of the release-gate evaluation that permitted issuance. Null until 22b. */
+  /** ISO of the release-gate evaluation that permitted issuance. Null until §22. */
   gateEvaluatedAt: string | null;
   /**
    * The five conditions exactly as they read at issuance — the audit artefact.
@@ -527,10 +538,10 @@ export interface DeliveryOrder extends DomainRecord {
 
   /**
    * CMTS `DODATE` — the legacy single date column, kept for migration parity.
-   * It is the 22b ISSUE date and nothing else, and mirrors `issuedAt`. Do not
-   * overload it with the 22a request date; that is `requestedAt`.
+   * It is the §22 ISSUE date and nothing else, and mirrors `issuedAt`. Do not
+   * overload it with the date the record was raised; that is `requestedAt`.
    *
-   * Null while the record is still at 22a. CMTS had no requested state, so a
+   * Null while the record is still pre-issuance. CMTS had no requested state, so a
    * legacy row simply did not exist until issue — null is the faithful
    * representation of "no legacy row yet", and matches `AWB.DODATE`, which is
    * already `string | null` for the same reason.
@@ -578,8 +589,10 @@ export interface DeliveryOrder extends DomainRecord {
  * The flow fans out to five conditions that all converge on
  * "G.Rent Voucher issued". Treated as AND pending BLK-10.
  *
- * This gate is the authority behind FC-01 §22b: nothing issues a Delivery
- * Order without it clearing. Ask `canIssueDo()` below rather than reading
+ * This gate is the authority behind FC-01 §22 — the step that cites it by
+ * name: nothing issues a Delivery Order without it clearing, and §22a can
+ * only collect a DO that issuance has already produced. Ask `canIssueDo()`
+ * below rather than reading
  * `canRelease` directly, so issuance has one enforcement point.
  * ================================================================== */
 
@@ -741,7 +754,7 @@ export function evaluateReleaseGate(
 }
 
 /**
- * FC-01 §22b — the single enforcement point for DO ISSUANCE.
+ * FC-01 §22 — the single enforcement point for DO ISSUANCE.
  *
  * Every screen that offers an "Issue DO" action must ask this rather than
  * re-deriving the rule; the pre-P0 demo let each screen decide for itself and

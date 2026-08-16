@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * FC-11 §E05 · Customs / ANF check, the correction loop, and the PSW export
+ * FC-11 §04–10 · Customs / ANF check, the correction loop, and the PSW export
  * declaration.
  *
  * The gap this closes: the demo modelled export customs as a single
@@ -148,7 +148,7 @@ export default function ExportCustomsPage() {
               M16
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
-              FC-11 §E05
+              FC-11 §04–10
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F5F3FF] text-[#7C3AED] text-[10px] font-bold inline-flex items-center font-mono">
               GREENFIELD

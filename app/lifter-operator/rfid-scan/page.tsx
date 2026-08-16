@@ -11,6 +11,7 @@ import PieceDetailCard from "@/components/lifter-operator/rfid-scan/PieceDetailC
 import RecentScansTable from "@/components/lifter-operator/rfid-scan/RecentScansTable";
 import DeviceStatus from "@/components/lifter-operator/rfid-scan/DeviceStatus";
 import ScanLoading from "@/components/lifter-operator/rfid-scan/ScanLoading";
+import { TASKS, taskById } from "../tasks/taskData";
 
 export default function RfidScanPage() {
   const [scanState, setScanState] = useState("waiting");
@@ -18,6 +19,15 @@ export default function RfidScanPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isError, setIsError] = useState(false);
   const [isEmpty, setIsEmpty] = useState(false);
+
+  /**
+   * The quick action used to point at the bare `/lifter-operator/task-detail`,
+   * which showed one hard-coded task whatever had just been scanned. A scanned
+   * piece names its own task, so link to that task's URL — resolved through
+   * the fixture so an unrecognised tag cannot produce a 404 link.
+   */
+  const scannedTask = taskById(scannedData?.assignedTask ?? "");
+  const taskDetailHref = `/lifter-operator/task-detail/${scannedTask?.id ?? TASKS[0].id}`;
 
   const breadcrumbItems = [
     { label: "Home", href: "/", icon: Home },
@@ -165,13 +175,13 @@ export default function RfidScanPage() {
                   Back to My Tasks
                 </Link>
                 <Link
-                  href="/lifter-operator/task-detail"
+                  href={taskDetailHref}
                   className="flex items-center gap-3 h-12 px-4 rounded-xl border border-[#E2E8F0] text-[14px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC] cursor-pointer transition-colors no-underline"
                 >
                   <span className="w-8 h-8 rounded-lg bg-[#EBF0F7] flex items-center justify-center">
                     <ScanLine size={16} className="text-[#0B2545]" />
                   </span>
-                  Task Detail
+                  {scannedTask ? `Task ${scannedTask.id}` : "Task Detail"}
                 </Link>
               </div>
             </div>

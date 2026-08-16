@@ -143,7 +143,7 @@ const ACTION_HANDOFF: Record<CdrFinalAction, { href: string | null; note: string
   },
   "F5-claim-liability": {
     href: null,
-    note: "Opens a carrier liability claim. No demo module — flagged on the module map.",
+    note: "Opens a carrier liability claim. No demo module — recorded as a coverage gap against M06, not built.",
   },
 };
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { ArrowRight, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 
 interface Task {
@@ -68,9 +69,18 @@ export default function TaskCard({ task, onStartTask, onReportIssue }: TaskCardP
               {task.priority}
             </span>
           </div>
-          <span className="text-[12px] font-mono text-[#94A3B8] whitespace-nowrap">
+          {/*
+            The drill-in. Same gesture as the AWB# in the warehouse queue:
+            click the record's own number to open the record. The row keeps
+            its inline "Detail" expander for a glance; this opens the task's
+            own URL, /lifter-operator/task-detail/<id>.
+          */}
+          <Link
+            href={`/lifter-operator/task-detail/${task.id}`}
+            className="text-[12px] font-mono font-semibold text-[#1B4F8B] whitespace-nowrap no-underline hover:text-[#0B2545] hover:underline transition-colors"
+          >
             {task.id}
-          </span>
+          </Link>
         </div>
 
         {/* AWB & RFID */}
@@ -191,12 +201,18 @@ export default function TaskCard({ task, onStartTask, onReportIssue }: TaskCardP
               <p className="text-[13px] font-medium text-[#0F172A]">{task.timeAssigned}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-[12px] text-[#64748B]">
+          <div className="flex items-center gap-2 text-[12px] text-[#64748B] flex-wrap">
             <span className="font-semibold">Status:</span>
             <span className="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[11px] font-semibold bg-[#DBEAFE] text-[#1B4F8B]">
               <span className="w-1.5 h-1.5 rounded-full bg-[#2E75B6]" />
               {task.status}
             </span>
+            <Link
+              href={`/lifter-operator/task-detail/${task.id}`}
+              className="ml-auto inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B4F8B] no-underline hover:underline"
+            >
+              Open task <ArrowRight size={12} />
+            </Link>
           </div>
         </div>
       )}

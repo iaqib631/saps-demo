@@ -81,7 +81,7 @@ export default function ExportBookingPage() {
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
               FC-11 §01
-</span>
+            </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F5F3FF] text-[#7C3AED] text-[10px] font-bold inline-flex items-center font-mono">
               GREENFIELD
             </span>

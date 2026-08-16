@@ -127,15 +127,28 @@ later, which is what the `audience` tag records — it is the split boundary, wr
 | **3** | **Superadmin Portal** | admin | Platform administration, oversight and the shared shell | FC-12 · M19 / M20 |
 
 **Warehouse Portal**, in flow order — 17 blocks:
-AWB Hub · Planning & Capacity · Import Documentation · Storage & Allocation · Warehouse Floor ·
+Planning & Capacity · Import Documentation · Storage & Allocation · Warehouse Floor ·
 Lifter Fleet · Messaging & Alerts · ULD Messaging · Customs Clearance · Tariff & Charges ·
 Invoice, Payment & Release · Gate & Yard · Dispatch & Closure · Exceptions & CDR · Transhipment ·
-Export · Operations Supervision
+Export · Operations Supervision · Integrations
 
 **Consignee Portal** — 3 blocks: Customer Self-Service · Customs Broker Desk · Freight Forwarder Desk
 
-**Superadmin Portal** — 5 blocks: Administration · Audit & Oversight · Architecture & Flows ·
-Integrations · Access & Session
+**Superadmin Portal** — 2 blocks: Administration · Audit & Oversight
+
+> **Updated 2026-08-16.** Three changes since this section was written, all verified against the
+> live rail (22 blocks, 127 leaf hrefs):
+>
+> - **AWB Hub left the rail.** It is a drill-in target — you reach it by clicking an AWB number,
+>   not by navigating — so it moved to the `DRILL_IN` registry in `components/Sidebar.tsx` along
+>   with the customs channel detail and lifter task detail screens. The warehouse count stays 17
+>   because Integrations moved in as it left.
+> - **Integrations moved from Superadmin to Warehouse**, at the foot of the run: the gateway estate
+>   is handled per site, and Warehouse is the per-site portal.
+> - **Architecture & Flows and Access & Session are gone.** The first was deleted outright, pages
+>   included (`/modules`, `/flows/[flowId]`). The second lost only its rail entries — `/login` and
+>   the three `/auth/*` pages still exist, in the `AUTH_STATES` registry, because `AuthGuard`,
+>   header sign-out and the landing CTAs all target them.
 
 ### Why the CHA and the freight forwarder sit in the Consignee portal
 

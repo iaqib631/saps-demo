@@ -229,7 +229,7 @@ export default function ExportAcceptancePage() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="h-[18px] px-1.5 rounded bg-[#EBF0F7] text-[#0B2545] text-[10px] font-bold inline-flex items-center font-mono">
               FC-11 §02–03 · §11–14
-</span>
+            </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
               CARGOACCEPTANCE 31 · ACCEPTENCEDETAIL 10 · CARGOACCEPTANCEHWB 7
             </span>

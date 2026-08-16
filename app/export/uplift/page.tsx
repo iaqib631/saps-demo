@@ -1,12 +1,12 @@
 "use client";
 
 /**
- * FC-11 §E12–E13 · Payload compatibility, uplift, and file closure.
+ * FC-11 §23–25 · Payload compatibility, uplift, and file closure.
  *
  * The gap this closes, and it is the one that mattered most: the demo
  * treated **handover to ramp as the end of the export story**. FC-11 does
- * not. After E11 there is a decision — "Payload compatibility with Flight"
- * — whose No edge goes back to 09 Export Warehousing, annotated *"can be
+ * not. After §22 there is a decision — "Payload compatibility with Flight"
+ * — whose No edge goes back to §17 export warehousing, annotated *"can be
  * offloaded depending upon weight provision"*.
  *
  * So cargo that passed every gate — screened, sealed, custody unbroken,
@@ -18,7 +18,7 @@
  * E13 closure is gated on the uplift actually happening, which is why an
  * offloaded consignment keeps its file open.
  *
- * BLK-02 — the export **invoice** half of FC-11's "15. Export Invoice /
+ * BLK-02 — the export **invoice** half of FC-11's §25 "Export Invoice /
  * Closure / Archive" is parked pending SAPS confirmation of the revenue
  * share (`INTERNATIONALCARGO`). The reference is shown; no amount is
  * invented behind it, and the gate says so rather than quietly passing.
@@ -26,7 +26,7 @@
  * **Ported in from the retired `/export-cargo/manifest-handover`** (see
  * PORTAL_AND_DEDUP_PLAN.md §2.1): the airline handover checklist and its
  * acceptance signature. That screen's outbound message panel went to
- * `/export/buildup`, which is where §E10 sits.
+ * `/export/buildup`, which is where §19 sits.
  */
 
 import { useMemo, useState } from "react";
@@ -102,7 +102,7 @@ export default function ExportUpliftPage() {
               M16 · M20
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
-              FC-11 §E12–E13
+              FC-11 §23–25
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#FEF3C7] text-[#D97706] text-[10px] font-bold inline-flex items-center font-mono">
               BLK-02
@@ -126,7 +126,7 @@ export default function ExportUpliftPage() {
           </p>
           <p className="text-[12px] text-[#4C1D95] mt-1 leading-relaxed">
             FC-11&rsquo;s payload decision sits <em>after</em> the ramp handover, and its No edge
-            returns cargo to <strong>09 Export Warehousing</strong> — &ldquo;can be offloaded
+            returns cargo to <strong>§17 export warehousing</strong> — &ldquo;can be offloaded
             depending upon weight provision&rdquo;. A consignment can clear all five ramp
             conditions and still not fly. That is why the ramp gate and this decision are shown
             side by side below, and why an offload leaves the file open.
@@ -354,7 +354,7 @@ export default function ExportUpliftPage() {
                         <ClipboardCheck size={15} className="text-[#64748B]" />
                         <div>
                           <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                            Airline handover — §E11
+                            Airline handover — §22
                           </h3>
                           <p className="text-[11px] text-[#94A3B8]">
                             What the carrier signs for, as distinct from what SAPS certifies
@@ -438,9 +438,9 @@ export default function ExportUpliftPage() {
                       )}
 
                       <p className="text-[11px] text-[#94A3B8] leading-relaxed">
-                        Signing closes §E11. It does not close the file — the payload decision
+                        Signing closes §22. It does not close the file — the payload decision
                         below can still bring this cargo back off the aircraft, and an offload
-                        returns it to E08 warehousing rather than to the counter.
+                        returns it to §17 warehousing rather than to the counter.
                       </p>
                     </div>
                   </div>

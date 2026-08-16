@@ -75,8 +75,10 @@ const groups: TileGroup[] = [
       // The CMTS-absorption preview screens were absorbed into the process modules that now own
       // each one: manifest and AWB split into /import, rent history and charges into /billing.
       // The absorption NARRATIVE — which CMTS tables landed where, and the Annexure-G scope
-      // delta — moved to /modules, so this tile names the operational spine and /modules carries
-      // the migration story. A tile still called "CMTS Absorption" would point at neither.
+      // delta — has no screen: it used to live at /modules, which was deleted along with the
+      // flow walkthroughs. It survives as prose in CMTS_MIGRATION_GAP_REPORT.md and as data in
+      // lib/architecture.ts. So this tile names the operational spine, which is the only thing
+      // it can honestly point at. A tile still called "CMTS Absorption" would point at nothing.
       { name: "Import Cargo", roleText: "Manifest · AWB split · acceptance · indexing", icon: <Package {...ICON_PROPS} />, href: "/import/summary" },
       { name: "Export Cargo", roleText: "Acceptance · customs · manifest · handover", icon: <Ship {...ICON_PROPS} />, href: "/export/booking" },
     ],

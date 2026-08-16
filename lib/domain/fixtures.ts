@@ -988,16 +988,18 @@ export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.
     const authLetterNo = `AL-2026-${String(1440 + i)}`;
     const issuedAt = a.DODATE;
 
-    // FC-01 §22a — the CHA raises the request off the NOA, so the request is
-    // anchored to the advice rather than invented. ARRIVAL_ADVICES puts the
-    // notice at (dwell − 1) days at 09:00; the request follows it the same
-    // morning and the terminal issues at 10:30, which keeps
-    // advice -> request -> issue in that order for every seed, including the
-    // one-day-old AWBs where all three land on the same date.
+    // The pre-issuance particulars. FC-01 numbers no request step — §22 is the
+    // terminal's issuance and §22a the CHA's collection of it — but the record
+    // still exists before it is issued, so that state is anchored to the NOA
+    // (FC-01 §18) rather than invented. ARRIVAL_ADVICES puts the notice at
+    // (dwell − 1) days at 09:00; the record is raised the same morning and the
+    // terminal issues at 10:30, which keeps advice -> record -> issue in that
+    // order for every seed, including the one-day-old AWBs where all three land
+    // on the same date.
     const advice = ARRIVAL_ADVICES.find((ad) => ad.AWBNO === a.AWBNO) ?? null;
     const requestedAt = daysAgo(Math.max(0, daysBetween(a.arrivedAt, DEMO_NOW) - 1), 9, 40);
 
-    // FC-01 §22b — the conditions as they read at issuance, frozen. Evaluated
+    // FC-01 §22 — the conditions as they read at issuance, frozen. Evaluated
     // here rather than fetched from `releaseGateFor` for two reasons: that
     // helper reads HOLDS, which is declared further down this file and would be
     // in the temporal dead zone at module init; and it answers "is this cargo
@@ -1036,10 +1038,11 @@ export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.
       continuesFromCmts: 3099,
     },
 
-    // Every seeded DO is past 22b — the filter is `do-issued` — so all of them
+    // Every seeded DO is past §22 — the filter is `do-issued` — so all of them
     // carry an issue timestamp and a gate snapshot. `collected` is the ones the
-    // CHA has since picked up at the counter (FC-02 §33), which is any AWB that
-    // went on to draw a gate pass.
+    // CHA has since picked up at the counter (FC-01 §22a, drawn again as
+    // FC-02 §33 and FC-08 §01), which is any AWB that went on to draw a gate
+    // pass.
     status: hasReached(a.stage, "gate-pass") ? "collected" : "issued",
     requestedAt,
     requestedBy: a.AGENT1 ?? a.CONSIGNEE1,

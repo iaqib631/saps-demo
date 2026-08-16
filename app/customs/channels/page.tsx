@@ -214,46 +214,66 @@ export default function CustomsChannelsPage() {
                 const tone = x.channel ? CHANNEL_TONE[x.channel] : null;
                 const openQ = x.queries.filter((q) => !q.closedAt).length;
                 return (
-                  <button
+                  /*
+                   * Two gestures per row, deliberately separate. Clicking the
+                   * row selects it into the read-only viewer on the right —
+                   * that stays in-page, because comparing declarations is
+                   * what this screen is for. The arrow opens the record's own
+                   * URL, /customs/channel-detail/<awbId>, which is where the
+                   * scrutiny is actually recorded. Viewer, then workbench.
+                   */
+                  <div
                     key={x.id}
-                    onClick={() => setSelectedId(x.id)}
-                    className="w-full text-left px-5 py-3 border-b border-[#F1F5F9] last:border-0 hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+                    className="flex items-stretch border-b border-[#F1F5F9] last:border-0"
                     style={{ backgroundColor: c?.id === x.id ? "#EBF0F7" : undefined }}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-[12px] font-semibold text-[#0F172A]">
-                        {x.AWBNO}
-                      </span>
-                      {tone && x.channel && (
-                        <span
-                          className="h-[18px] px-1.5 rounded text-[9px] font-bold inline-flex items-center"
-                          style={{ backgroundColor: tone.bg, color: tone.fg }}
-                        >
-                          {RISK_CHANNEL_LABEL[x.channel].toUpperCase()}
+                    <button
+                      onClick={() => setSelectedId(x.id)}
+                      className="flex-1 min-w-0 text-left px-5 py-3 hover:bg-[#F8FAFC] transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-[12px] font-semibold text-[#0F172A]">
+                          {x.AWBNO}
                         </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-[#64748B] mt-0.5 truncate">
-                      {SD_STATUS_LABEL[x.status]}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                      {openQ > 0 && (
-                        <span className="h-[16px] px-1.5 rounded bg-[#FEF3C7] text-[#D97706] text-[9px] font-bold inline-flex items-center">
-                          {openQ} OPEN QUERY
-                        </span>
-                      )}
-                      {x.examination?.discrepancyFound && (
-                        <span className="h-[16px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[9px] font-bold inline-flex items-center">
-                          EXAM DISCREPANCY
-                        </span>
-                      )}
-                      {x.ooc && !oocVerified(x.ooc) && (
-                        <span className="h-[16px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[9px] font-bold inline-flex items-center">
-                          OOC MISMATCH
-                        </span>
-                      )}
-                    </div>
-                  </button>
+                        {tone && x.channel && (
+                          <span
+                            className="h-[18px] px-1.5 rounded text-[9px] font-bold inline-flex items-center"
+                            style={{ backgroundColor: tone.bg, color: tone.fg }}
+                          >
+                            {RISK_CHANNEL_LABEL[x.channel].toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[#64748B] mt-0.5 truncate">
+                        {SD_STATUS_LABEL[x.status]}
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                        {openQ > 0 && (
+                          <span className="h-[16px] px-1.5 rounded bg-[#FEF3C7] text-[#D97706] text-[9px] font-bold inline-flex items-center">
+                            {openQ} OPEN QUERY
+                          </span>
+                        )}
+                        {x.examination?.discrepancyFound && (
+                          <span className="h-[16px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[9px] font-bold inline-flex items-center">
+                            EXAM DISCREPANCY
+                          </span>
+                        )}
+                        {x.ooc && !oocVerified(x.ooc) && (
+                          <span className="h-[16px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[9px] font-bold inline-flex items-center">
+                            OOC MISMATCH
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                    <Link
+                      href={`/customs/channel-detail/${x.awbId}`}
+                      aria-label={`Open the channel workbench for ${x.AWBNO}`}
+                      title="Open channel workbench"
+                      className="flex items-center px-3 text-[#94A3B8] no-underline hover:text-[#1B4F8B] hover:bg-[#F8FAFC] transition-colors"
+                    >
+                      <ArrowUpRight size={14} />
+                    </Link>
+                  </div>
                 );
               })}
             </div>
@@ -280,12 +300,21 @@ export default function CustomsChannelsPage() {
                     </div>
                     <p className="font-mono text-[11px] text-[#64748B] mt-1.5">{c.sdRef}</p>
                   </div>
-                  <Link
-                    href="/customs/filing"
-                    className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B4F8B] no-underline hover:underline"
-                  >
-                    Declaration <ArrowUpRight size={12} />
-                  </Link>
+                  <div className="flex items-center gap-4">
+                    <Link
+                      href="/customs/filing"
+                      className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B4F8B] no-underline hover:underline"
+                    >
+                      Declaration <ArrowUpRight size={12} />
+                    </Link>
+                    {/* The workbench for the row selected on the left. */}
+                    <Link
+                      href={`/customs/channel-detail/${c.awbId}`}
+                      className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B4F8B] no-underline hover:underline"
+                    >
+                      Channel workbench <ArrowUpRight size={12} />
+                    </Link>
+                  </div>
                 </div>
               </div>
 
