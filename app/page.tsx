@@ -51,7 +51,11 @@ const groups: TileGroup[] = [
   {
     label: "Compliance & Finance",
     tiles: [
-      { name: "Excise / Compliance", roleText: "Customs queue · OOC · holds · Section 82", icon: <ShieldCheck {...ICON_PROPS} />, href: "/excise-compliance" },
+      // The /excise-compliance hub was retired: its KPI strip and SLA Watch were rebuilt on the
+      // new /customs index, and its four working screens moved into the portals that own them
+      // (queue/channel-detail/ooc-capture under /customs, holds and Section 82 under /exceptions).
+      // /customs is the tile's target because it is the only one of those that is a landing page.
+      { name: "Customs & Compliance", roleText: "Customs queue · OOC · holds · Section 82", icon: <ShieldCheck {...ICON_PROPS} />, href: "/customs" },
       { name: "Finance Manager", roleText: "Invoicing · waivers · payments · tariffs", icon: <Wallet {...ICON_PROPS} />, href: "/finance-manager" },
       { name: "Auditor", roleText: "Cargo trace · financial trace · RBAC", icon: <FileSearch {...ICON_PROPS} />, href: "/auditor" },
     ],
@@ -68,8 +72,13 @@ const groups: TileGroup[] = [
     label: "Cargo Modules",
     tiles: [
       { name: "ULD Management", roleText: "UCM · SCM · LUC · message log", icon: <MessageSquare {...ICON_PROPS} />, href: "/uld-message-builder" },
-      { name: "CMTS Absorption", roleText: "Manifest · AWB split · rent history · charges", icon: <Package {...ICON_PROPS} />, href: "/cmts-absorption" },
-      { name: "Export Cargo", roleText: "Acceptance · customs · manifest · handover", icon: <Ship {...ICON_PROPS} />, href: "/export-cargo" },
+      // The CMTS-absorption preview screens were absorbed into the process modules that now own
+      // each one: manifest and AWB split into /import, rent history and charges into /billing.
+      // The absorption NARRATIVE — which CMTS tables landed where, and the Annexure-G scope
+      // delta — moved to /modules, so this tile names the operational spine and /modules carries
+      // the migration story. A tile still called "CMTS Absorption" would point at neither.
+      { name: "Import Cargo", roleText: "Manifest · AWB split · acceptance · indexing", icon: <Package {...ICON_PROPS} />, href: "/import/summary" },
+      { name: "Export Cargo", roleText: "Acceptance · customs · manifest · handover", icon: <Ship {...ICON_PROPS} />, href: "/export/booking" },
     ],
   },
   {

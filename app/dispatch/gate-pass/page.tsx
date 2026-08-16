@@ -7,6 +7,13 @@
  * them — vehicle, driver, transporter, escort and the seal fields had no
  * home at all.
  *
+ * Seven of those columns are document numbers and seven more are the dates
+ * those documents were issued. They are rendered as seven pairs in a card
+ * of their own rather than as fourteen cells in the record grid, because
+ * that is what a gate pass is: not a document in its own right but a
+ * receipt for a set of other documents, each one proven to have been
+ * current by the date printed beside its number.
+ *
  * The FC-08 amendment is what makes the pick list interesting: the tag
  * bound at putaway (FC-03) is **read again at retrieval**, so the piece
  * count verifies itself rather than being typed. That turns "Piece Count
@@ -17,7 +24,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, PackageCheck, Radio, Truck, XCircle } from "lucide-react";
+import { ArrowUpRight, FileText, PackageCheck, Radio, Truck, XCircle } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
@@ -40,6 +47,160 @@ const OUTCOME_TONE: Record<string, { bg: string; fg: string }> = {
   damaged: { bg: "#FEF3C7", fg: "#D97706" },
 };
 
+/**
+ * One CMTS column. The tiny mono caption above the value is this screen's
+ * parity marker: it names the legacy column the value was read out of, so a
+ * migration reviewer can check the form against the schema without opening
+ * the code. Extracted from the record grid so the paired document block
+ * below renders a value in exactly the same visual language — a pair has to
+ * look like two of the screen's own fields wearing one label, not like a
+ * different widget bolted on.
+ */
+function Cell({ cmts, value, mono }: { cmts: string; value: string | null; mono?: boolean }) {
+  return (
+    <div className="flex flex-col gap-1 min-w-0">
+      <span className="text-[9px] font-mono text-[#CBD5E1]" title={`CMTS column: ${cmts}`}>
+        {cmts}
+      </span>
+      <span
+        className={`text-[13px] font-medium break-words ${mono ? "font-mono" : ""}`}
+        style={{ color: value ? "#0F172A" : "#CBD5E1" }}
+      >
+        {value ?? "null"}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Null and empty string both mean "the clerk wrote nothing here". CMTS is
+ * inconsistent about which one a blank column carries — it depends on what
+ * the originating table defaulted to — so every presence test on this
+ * screen has to accept both, or a pass with `DONo: ""` would render as
+ * though it had a delivery order behind it.
+ */
+const filled = (v: string | null) => v !== null && v.trim() !== "";
+
+/**
+ * One document the gate pass was issued against, number and date together.
+ *
+ * These are not fourteen fields, they are seven. "26 Jul 2026" identifies
+ * nothing on its own, and "GR-2026-04420" with no date does not say the
+ * voucher was still current when the vehicle was let out — a gate pass is
+ * only as good as the paperwork it names, so the pair is the unit of proof
+ * and is rendered as one labelled box. Both CMTS columns stay visible in
+ * every state, including the empty ones, because parity is checked against
+ * the columns a screen shows and a field that disappears when it is null
+ * cannot be checked at all.
+ *
+ * The two halves are null together or set together. Where both are empty
+ * that is usually legitimate (no house waybill on a straight master, no
+ * bank draft when the charges went through the cash window) and `absent`
+ * says which case this is, so the reader does not go hunting for missing
+ * data that was never supposed to exist. Where exactly one half is set the
+ * record is a migration fault rather than a partial one: neither half can
+ * be trusted, because a date without its number cannot be traced back to a
+ * filing and a number without its date cannot be shown to have been valid.
+ * That is called out in amber instead of being drawn as an ordinary blank,
+ * which is precisely the class of defect this screen exists to surface.
+ */
+function DocPair({
+  label,
+  numberCmts,
+  dateCmts,
+  number,
+  date,
+  absent,
+}: {
+  label: string;
+  numberCmts: string;
+  dateCmts: string;
+  number: string | null;
+  date: string | null;
+  /** Why an empty pair is legitimate here — shown only when both are blank. */
+  absent: string;
+}) {
+  const hasNumber = filled(number);
+  const hasDate = filled(date);
+
+  const note =
+    hasNumber && hasDate
+      ? null
+      : hasNumber || hasDate
+        ? {
+            colour: "#D97706",
+            text: `Unpaired in the source — ${hasNumber ? dateCmts : numberCmts} is blank against a ${
+              hasNumber ? numberCmts : dateCmts
+            } that is set. Treat the document as unproven.`,
+          }
+        : { colour: "#94A3B8", text: absent };
+
+  return (
+    <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+      <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">
+        {label}
+      </span>
+      <div className="grid grid-cols-2 gap-x-4 mt-2">
+        <Cell cmts={numberCmts} value={hasNumber ? number : null} mono />
+        <Cell cmts={dateCmts} value={date && hasDate ? formatDate(date) : null} />
+      </div>
+      {note && (
+        <p className="text-[11px] mt-2 leading-snug" style={{ color: note.colour }}>
+          {note.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * CASHNO and BDNo are the two ways the charges can have been settled before
+ * the gate lets the vehicle go, and CMTS treats them as alternatives — one
+ * pair filled, the other left blank. Saying which route this pass took is
+ * what stops the empty pair reading as missing data: a reader who sees four
+ * blank settlement columns and no explanation assumes the migration dropped
+ * them. Both filled at once is the one case worth flagging, since it means
+ * the consignment was receipted twice or a route was carried over in error.
+ *
+ * `grNo` is read only to tell the two empty cases apart. A pass with no
+ * receipt but a rent voucher is ordinary — the money is accounted for on
+ * the voucher — whereas a pass with neither has nothing on it anywhere that
+ * says the charges were cleared, and that is worth an amber line.
+ */
+function settlementNote(cashNo: string | null, bdNo: string | null, grNo: string | null) {
+  const cash = filled(cashNo);
+  const draft = filled(bdNo);
+
+  if (cash && draft) {
+    return {
+      colour: "#D97706",
+      text: "Both settlement pairs are filled. CMTS treats cash and bank draft as alternatives, so one of the two was receipted twice or carried over in error — reconcile before the pass is honoured.",
+    };
+  }
+  if (cash) {
+    return {
+      colour: "#64748B",
+      text: "Settled at the cash window, so CASHNO / CASHNODate carry the receipt and the bank-draft pair is blank by design — the two routes are alternatives, never both.",
+    };
+  }
+  if (draft) {
+    return {
+      colour: "#64748B",
+      text: "Settled by bank draft, so BDNo / BDDate carry the instrument and the cash pair is blank by design — the two routes are alternatives, never both.",
+    };
+  }
+  if (filled(grNo)) {
+    return {
+      colour: "#64748B",
+      text: "Neither settlement pair is filled, so the pass carries no receipt of its own — the godown rent voucher beside it is the only money reference on the document.",
+    };
+  }
+  return {
+    colour: "#D97706",
+    text: "No settlement reference at all: no cash receipt, no bank draft and no rent voucher. Nothing on this pass shows the charges were cleared before the vehicle was loaded.",
+  };
+}
+
 export default function GatePassPage() {
   const { scope, isHq } = useSite();
   const passes = useMemo(() => listGatePasses(scope), [scope]);
@@ -48,6 +209,7 @@ export default function GatePassPage() {
   const gp = passes.find((p) => p.GATEPASSNO === selected) ?? passes[0] ?? null;
   const session = gp ? pickSessionFor(gp.GATEPASSNO) : null;
   const awb = gp ? awbByNo(gp.AWBNO) : null;
+  const settlement = settlementNote(gp?.CASHNO ?? null, gp?.BDNo ?? null, gp?.GRNo ?? null);
 
   const [tab, setTab] = useState<"pass" | "pick">("pass");
 
@@ -197,59 +359,200 @@ export default function GatePassPage() {
               </div>
 
               {tab === "pass" && (
-                <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-                  <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
-                    <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                      Gate pass record
-                    </h3>
-                    <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                      CMTS GATEPASS — the columns the demo never rendered
-                    </p>
-                  </div>
-                  <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-4">
-                    {(
-                      [
-                        ["GATEPASSNO", String(gp.GATEPASSNO)],
-                        ["GATEPASSDATE", formatDate(gp.GATEPASSDATE)],
-                        ["IGMNO", gp.IGMNO],
-                        ["AWBNO", gp.AWBNO],
-                        ["ARRIVALDATE", formatDate(gp.ARRIVALDATE)],
-                        ["HWBNO", gp.HWBNO],
-                        ["DONo", gp.DONo],
-                        ["GRNo", gp.GRNo],
-                        ["ChallanNo", gp.ChallanNo],
-                        ["CASHNO", gp.CASHNO],
-                        ["INDEXNO", gp.INDEXNO],
-                        ["PIECES", String(gp.PIECES)],
-                        ["WEIGHT", String(gp.WEIGHT)],
-                        ["CONSIGNEE", gp.CONSIGNEE],
-                        ["Agent", gp.Agent],
-                        ["RecivingPerson", gp.RecivingPerson],
-                        ["NICNO", gp.NICNO],
-                        ["CPNO", gp.CPNO],
-                        ["RcvngPersonPic", gp.RcvngPersonPic],
-                        ["VehicleNo", gp.VehicleNo],
-                        ["ClearingTime", gp.ClearingTime],
-                        ["MarksNumber", gp.MarksNumber],
-                        ["DeliveryDate", gp.DeliveryDate ? formatDate(gp.DeliveryDate) : null],
-                        ["NAMEOFCUSTODIANSHED", gp.NAMEOFCUSTODIANSHED],
-                        ["SerialNoWithYear", gp.SerialNoWithYear],
-                        ["DetendIdentification", gp.DetendIdentification],
-                      ] as const
-                    ).map(([k, v]) => (
-                      <div key={k} className="flex flex-col gap-1">
-                        <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-                        <span
-                          className="text-[13px] font-medium break-words"
-                          style={{ color: v ? "#0F172A" : "#CBD5E1" }}
-                        >
-                          {v ?? "null"}
-                        </span>
+                <>
+                  <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
+                      <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                        Gate pass record
+                      </h3>
+                      <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                        CMTS GATEPASS — the pass itself, the consignment on it and the people
+                        it was handed to. The documents it was issued against are below.
+                      </p>
+                    </div>
+                    <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-4">
+                      {(
+                        [
+                          ["GATEPASSNO", String(gp.GATEPASSNO)],
+                          ["GATEPASSDATE", formatDate(gp.GATEPASSDATE)],
+                          ["SerialNo", String(gp.SerialNo)],
+                          ["SerialNoWithYear", gp.SerialNoWithYear],
+                          ["ARRIVALDATE", formatDate(gp.ARRIVALDATE)],
+                          ["INDEXNO", gp.INDEXNO === null ? null : String(gp.INDEXNO)],
+                          ["PIECES", String(gp.PIECES)],
+                          ["WEIGHT", String(gp.WEIGHT)],
+                          ["MarksNumber", gp.MarksNumber],
+                          ["CONSIGNEE", gp.CONSIGNEE],
+                          ["Agent", gp.Agent],
+                          ["RecivingPerson", gp.RecivingPerson],
+                          ["NICNO", gp.NICNO],
+                          ["CPNO", gp.CPNO],
+                          ["RcvngPersonPic", gp.RcvngPersonPic],
+                          ["VehicleNo", gp.VehicleNo],
+                          ["ClearingTime", gp.ClearingTime],
+                          ["DeliveryDate", gp.DeliveryDate ? formatDate(gp.DeliveryDate) : null],
+                          ["NAMEOFCUSTODIANSHED", gp.NAMEOFCUSTODIANSHED],
+                          ["DetendIdentification", gp.DetendIdentification],
+                        ] as const
+                      ).map(([k, v]) => (
+                        <Cell key={k} cmts={k} value={v} />
+                      ))}
+
+                      {/*
+                       * SerialNo sits beside SerialNoWithYear above rather than at the end
+                       * of the grid because the two are only meaningful together, and a
+                       * reader who meets the bare number first will assume it is the key.
+                       * It is not — hence this line.
+                       */}
+                      <div className="col-span-2 md:col-span-3 border-t border-[#F1F5F9] pt-3.5">
+                        <p className="text-[11px] text-[#64748B] leading-snug">
+                          <span className="font-mono text-[#94A3B8]">SerialNo</span> is the gate
+                          register sequence the clerk reads aloud and writes in the book. It
+                          restarts, which is why{" "}
+                          <span className="font-mono text-[#94A3B8]">SerialNoWithYear</span>{" "}
+                          qualifies it —{" "}
+                          <span className="font-mono text-[#94A3B8]">GATEPASSNO</span> stays the
+                          identity nothing else can stand in for.
+                        </p>
                       </div>
-                    ))}
+                    </div>
+                    <AuditStrip record={gp} />
                   </div>
-                  <AuditStrip record={gp} />
-                </div>
+
+                  {/*
+                   * The document block. A gate pass is not a document in its own right so
+                   * much as a receipt for a set of other documents, which is why these get
+                   * a card of their own rather than another twenty cells in the grid above:
+                   * on the printed pass they are the block the officer at the barrier reads,
+                   * and a reviewer checking a pass checks this block and nothing else.
+                   */}
+                  <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-start gap-2">
+                      <FileText size={15} className="text-[#64748B] flex-shrink-0 mt-0.5" />
+                      <div>
+                        <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                          Documents the pass was issued against
+                        </h3>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                          Each number carries the date its document was issued — together they
+                          prove the paperwork was current when the vehicle was let out.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {(
+                        [
+                          {
+                            label: "Import general manifest",
+                            numberCmts: "IGMNO",
+                            dateCmts: "IGMNODate",
+                            number: gp.IGMNO,
+                            date: gp.IGMNODate,
+                            absent:
+                              "No IGM on the pass. Every import is manifested before it lands, so an issued pass without one is a gap to chase, not a blank.",
+                          },
+                          {
+                            label: "Master air waybill",
+                            numberCmts: "AWBNO",
+                            dateCmts: "AWBNODate",
+                            number: gp.AWBNO,
+                            date: gp.AWBNODate,
+                            absent:
+                              "No master waybill. It is the consignment's identity — nothing can legitimately leave the shed without it.",
+                          },
+                          {
+                            label: "House air waybill",
+                            numberCmts: "HWBNO",
+                            dateCmts: "HWBNODate",
+                            number: gp.HWBNO,
+                            date: gp.HWBNODate,
+                            absent:
+                              "Not a consolidation. The pass covers the master waybill directly, so CMTS leaves the house pair empty.",
+                          },
+                          {
+                            label: "Delivery order",
+                            numberCmts: "DONo",
+                            dateCmts: "DoDate",
+                            number: gp.DONo,
+                            date: gp.DoDate,
+                            absent:
+                              "No delivery order. FC-08 §02 holds the cargo at the barrier until one is produced and verified against CNIC.",
+                          },
+                          {
+                            /*
+                             * Labelled for what the value actually is. `GRNo` carries the
+                             * GODOWNRENT voucher number — the same string /billing/godown-rent
+                             * shows as VOUCHERNO — so calling it a goods receipt here would
+                             * send an operator looking for a document that does not exist.
+                             */
+                            label: "Godown rent voucher",
+                            numberCmts: "GRNo",
+                            dateCmts: "GRDate",
+                            number: gp.GRNo,
+                            date: gp.GRDate,
+                            absent:
+                              "No godown rent voucher — storage has not been billed against this consignment.",
+                          },
+                        ] as const
+                      ).map((p) => (
+                        <DocPair key={p.numberCmts} {...p} />
+                      ))}
+
+                      {/*
+                       * ChallanNo breaks the pattern and is drawn broken on purpose: CMTS
+                       * has no ChallanNoDate column, so a dashed box says "this one really
+                       * is half a pair" rather than leaving a reader to wonder which screen
+                       * dropped the date.
+                       */}
+                      <div className="rounded-xl border border-dashed border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+                        <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">
+                          Challan
+                        </span>
+                        <div className="grid grid-cols-2 gap-x-4 mt-2">
+                          <Cell cmts="ChallanNo" value={gp.ChallanNo} mono />
+                        </div>
+                        <p className="text-[11px] text-[#94A3B8] mt-2 leading-snug">
+                          Unpaired at source — CMTS carries no ChallanNoDate, so the number is
+                          the only half there has ever been.
+                        </p>
+                      </div>
+
+                      {/*
+                       * Cash and draft are laid out last and adjacent because they are one
+                       * decision seen twice, and the note under them explains the blank half.
+                       */}
+                      {(
+                        [
+                          {
+                            label: "Cash receipt",
+                            numberCmts: "CASHNO",
+                            dateCmts: "CASHNODate",
+                            number: gp.CASHNO,
+                            date: gp.CASHNODate,
+                            absent: "Charges were not receipted at the cash window.",
+                          },
+                          {
+                            label: "Bank draft",
+                            numberCmts: "BDNo",
+                            dateCmts: "BDDate",
+                            number: gp.BDNo,
+                            date: gp.BDDate,
+                            absent: "No bank draft lodged against this pass.",
+                          },
+                        ] as const
+                      ).map((p) => (
+                        <DocPair key={p.numberCmts} {...p} />
+                      ))}
+                    </div>
+
+                    <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+                      <p className="text-[11px] leading-snug" style={{ color: settlement.colour }}>
+                        {settlement.text}
+                      </p>
+                    </div>
+                  </div>
+                </>
               )}
 
               {tab === "pick" && session && (

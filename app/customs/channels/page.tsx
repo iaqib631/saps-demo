@@ -13,10 +13,16 @@
  * We render Red and keep the flow's own word visible rather than quietly
  * resolving the discrepancy — it needs SAPS confirmation.
  *
- * The OOC amendment is the other half: OOC is **fetched from PSW — or
- * keyed from the print when the gateway is down — and verified
- * field-by-field against the SD**. The capture is not the control; the
- * reconciliation is. A mismatch blocks release.
+ * The OOC amendment is the other half: OOC arrives by one of **three**
+ * routes — fetched from PSW, imaged at the counter scanner, or keyed from
+ * the print with both unavailable — and is then **verified field-by-field
+ * against the SD**. The capture is not the control; the reconciliation is.
+ * A mismatch blocks release. The badge below names the route it actually
+ * took (BC-1): it used to name two routes for three, which put "scanner
+ * capture" over records nobody had scanned.
+ *
+ * The keying path itself lives at /customs/ooc-capture — this screen reads
+ * and reconciles, it does not produce.
  *
  * Drawn as an OCR step; converted once SAPS confirmed OCR runs only at
  * the two scan points (inbound MAWB/HAWB, receiver docs at collection).
@@ -52,6 +58,7 @@ import {
   listClearances,
   oocMismatches,
   oocVerified,
+  type OutOfCharge,
   type RiskChannel,
 } from "@/lib/domain";
 
@@ -62,6 +69,31 @@ const CHANNEL_TONE: Record<RiskChannel, { bg: string; fg: string; border: string
 };
 
 const ALL_CHANNELS: RiskChannel[] = ["green", "yellow", "red"];
+
+/**
+ * BC-1 — three capture routes, three badges.
+ *
+ * `OutOfCharge.source` has been a three-member union since the OOC
+ * amendment, but this badge was a two-way ternary: anything that was not a
+ * PSW fetch printed "SCANNER CAPTURE", so a record keyed off the counter
+ * copy with the gateway down claimed on screen to have been imaged at the
+ * scanner. customs.ts is blunt about why that matters — "a badge that says
+ * 'scanner capture' over a keyed record is a lie about provenance" — and it
+ * is the kind of lie an auditor catches, because the record's `scannedAt` is
+ * null underneath it.
+ *
+ * Keyed as a Record over the union rather than a chain of ternaries so a
+ * fourth capture route cannot be added without the compiler asking for its
+ * badge here.
+ */
+const OOC_SOURCE_BADGE: Record<
+  OutOfCharge["source"],
+  { label: string; bg: string; fg: string }
+> = {
+  "psw-fetch": { label: "FETCHED FROM PSW", bg: "#DBEAFE", fg: "#1B4F8B" },
+  scanner: { label: "SCANNER CAPTURE", bg: "#F5F3FF", fg: "#7C3AED" },
+  keyed: { label: "KEYED FROM PRINT", bg: "#FEF3C7", fg: "#D97706" },
+};
 
 export default function CustomsChannelsPage() {
   const { scope, isHq } = useSite();
@@ -529,13 +561,12 @@ export default function CustomsChannelsPage() {
                   {c.ooc && (
                     <span
                       className="h-[22px] px-2.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1"
-                      style={
-                        c.ooc.source === "psw-fetch"
-                          ? { backgroundColor: "#DBEAFE", color: "#1B4F8B" }
-                          : { backgroundColor: "#F5F3FF", color: "#7C3AED" }
-                      }
+                      style={{
+                        backgroundColor: OOC_SOURCE_BADGE[c.ooc.source].bg,
+                        color: OOC_SOURCE_BADGE[c.ooc.source].fg,
+                      }}
                     >
-                      {c.ooc.source === "psw-fetch" ? "FETCHED FROM PSW" : "SCANNER CAPTURE"}
+                      {OOC_SOURCE_BADGE[c.ooc.source].label}
                     </span>
                   )}
                 </div>
@@ -554,11 +585,22 @@ export default function CustomsChannelsPage() {
                           ["Issuing officer", c.ooc.issuingOfficer],
                           [
                             "Captured",
-                            c.ooc.fetchedAt
-                              ? `PSW fetch ${formatDateTime(c.ooc.fetchedAt)}`
-                              : c.ooc.keyedAt
-                                ? `Keyed ${formatDateTime(c.ooc.keyedAt)}`
-                                : "—",
+                            // Same BC-1 blind spot as the badge above: the
+                            // scanner timestamp had no branch, so a scanned
+                            // OOC read "—" for when it was captured. Each
+                            // route stamps its own field, so read the one the
+                            // source names rather than guessing by fallback.
+                            c.ooc.source === "psw-fetch"
+                              ? c.ooc.fetchedAt
+                                ? `PSW fetch ${formatDateTime(c.ooc.fetchedAt)}`
+                                : "—"
+                              : c.ooc.source === "scanner"
+                                ? c.ooc.scannedAt
+                                  ? `Scanned ${formatDateTime(c.ooc.scannedAt)}`
+                                  : "—"
+                                : c.ooc.keyedAt
+                                  ? `Keyed ${formatDateTime(c.ooc.keyedAt)}`
+                                  : "—",
                           ],
                         ] as const
                       ).map(([k, v]) => (
@@ -635,7 +677,7 @@ export default function CustomsChannelsPage() {
                             ? "The OOC and the declaration agree on every checked field."
                             : `Mismatch on ${oocMismatches(c.ooc)
                                 .map((m) => m.label.toLowerCase())
-                                .join(", ")}. Release stays blocked until the OOC is reconciled or reissued — a scan nobody reconciled is not a control.`}
+                                .join(", ")}. Release stays blocked until the OOC is reconciled or reissued — a document nobody reconciled is not a control, however it was captured.`}
                         </p>
                       </div>
                     </div>

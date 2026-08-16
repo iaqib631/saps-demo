@@ -9,9 +9,9 @@
  * for nineteen days while three other branches also hold cargo that nobody
  * is watching.
  *
- * Six kinds, six different escalation thresholds, one board. The existing
- * `/warehouse-manager/exceptions-queue` is the warehouse's own slice; this
- * is the compliance-side view across all of them.
+ * Six kinds, six different escalation thresholds, one board. The warehouse's
+ * own slice of this used to be a separate screen; its queue layer merged into
+ * the CDR workbench, and this stays the compliance-side view across all six.
  */
 
 import { useMemo, useState } from "react";
@@ -71,7 +71,11 @@ const KIND_META: Record<
     label: "Detained",
     tone: "#0F766E",
     bg: "#CCFBF1",
-    href: "/excise-compliance/customs-queue",
+    // Detained cargo drills into the purpose-built Detend register, not into the
+    // general customs work queue. The old target was the legacy compliance queue,
+    // which pre-dated /customs/detained and only ever listed the detention as one
+    // more row; the register is the screen that models the detention itself.
+    href: "/customs/detained",
     flow: "FC-06",
   },
 };

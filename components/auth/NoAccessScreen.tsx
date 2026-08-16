@@ -18,7 +18,7 @@ export default function NoAccessScreen() {
 
         <div className="flex flex-col gap-2.5">
           <Link
-            href="/uld-message-builder/sign-in"
+            href="/login"
             className="flex items-center justify-center gap-2 h-11 rounded-xl text-[14px] font-bold text-white cursor-pointer transition-colors hover:opacity-90"
             style={{ backgroundColor: "#0B2545" }}
           >
@@ -26,11 +26,11 @@ export default function NoAccessScreen() {
             Sign In
           </Link>
           <Link
-            href="/uld-message-builder/register"
+            href="/login?view=request-access"
             className="flex items-center justify-center gap-2 h-10 rounded-xl border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC] cursor-pointer transition-colors"
           >
             <UserPlus size={16} />
-            Register
+            Request Access
           </Link>
           <Link
             href="/"

@@ -10,7 +10,7 @@ export default function PermissionDeniedScreen() {
 
   const handleRequestAccess = () => {
     requestAccess();
-    router.push("/uld-message-builder/sign-in");
+    router.push("/login");
   };
 
   return (

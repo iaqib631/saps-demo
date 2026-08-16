@@ -38,9 +38,13 @@ export default function Header({
         .slice(0, 2)
     : "??";
 
+  // Sign-out lands on /login, not on the old ULD sign-in screen. /login is the app's
+  // only real gate — proxy.ts checks the saps_gate cookie server-side and bounces every
+  // protected route there — so it is the one place a signed-out user can sign back in.
+  // The ULD-namespaced sign-in screen is being folded into it.
   const handleSignOut = () => {
     logout();
-    router.push("/uld-message-builder/sign-in");
+    router.push("/login");
   };
 
   return (

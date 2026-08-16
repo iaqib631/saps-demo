@@ -7,11 +7,12 @@
  *   `GODOWNRENTDUPLICATE` (10)
  *   `grCharges` (48)         calculation scratch
  *   `AWBDELEIVERYORDER` (39) delivery order
+ *   `CHARGECALCULATER` (3)   calculator screen header
  *   `CARGOSUBCLASSCHARGES` (15), `LOCATIONCHARGES` (10), `TaxType` (12)
  */
 
 import type { Amount, DocNumberRef, DomainRecord, SiteCode } from "./common";
-import { round2 } from "./common";
+import { daysBetween, round2 } from "./common";
 import { CATEGORY_SURCHARGES, TARIFF_SLABS, cargoClass, cargoSubClass } from "./masters";
 
 /* ================================================================== *
@@ -30,14 +31,55 @@ export interface SlabLine {
 
 export interface ChargeCalculation {
   awbId: number;
+  /**
+   * CMTS `CHARGECALCULATER.VOUCHERNO` — varchar(50), nullable in the source.
+   *
+   * The godown-rent voucher this calculation was written onto. It is the SAME
+   * number as `GodownRent.VOUCHERNO` and the same series, not a second
+   * identifier for the calculation: CMTS models the calculator as a header
+   * pointing back at the voucher it priced, so a value here means "this
+   * arithmetic is the working behind that document".
+   *
+   * Null is a real state, not missing data. The calculator runs in two modes
+   * and only one of them has a voucher — a live quote priced against today's
+   * tariff has not been committed to anything, so it legitimately reads null,
+   * while a calculation recalled from a raised voucher carries that voucher's
+   * number. Defaulting this to "" or synthesising a number would make an
+   * uncommitted quote indistinguishable from a billed voucher on screen,
+   * which is precisely what the source column being nullable guards against.
+   */
+  VOUCHERNO: string | null;
   /** Which tariff version produced this — provenance is a P5-1 requirement. */
   tariffVersion: string;
   calculatedAt: string;
 
-  // FC-07 §01–03
+  /*
+   * FC-07 §01–03a, in the order the events actually happen. The fields are
+   * laid out in that order deliberately: reading them top to bottom is the
+   * charging story, and anything that reorders them reintroduces the old
+   * bug where the free period appeared to be decided before the clock had
+   * started.
+   *
+   *   §01  cargo arrives on the flight            → arrivalAt
+   *   §02  cargo is taken into the shed and the
+   *        storage clock starts                   → clockStartedAt
+   *   §03  free / grace period runs from the
+   *        clock start; nothing is charged in it  → freeDays
+   *   §03a chargeable period = dwell − free       → chargeableDays
+   *
+   * `totalDays` is the dwell measured from §02 to the calculation instant,
+   * NOT from §01 — the gap between the aircraft landing and the cargo being
+   * accepted is the handler's, and is never billed to the consignee.
+   */
+  /** FC-07 §01 — flight arrival. Provenance and display only; nothing is priced from it. */
   arrivalAt: string;
-  freeDays: number;
+  /** FC-07 §02 — the instant the storage clock started, i.e. the AWB's `intakeAt`. */
+  clockStartedAt: string;
+  /** Dwell in whole days, measured from `clockStartedAt`. */
   totalDays: number;
+  /** FC-07 §03 — free / grace days from the clock start, during which nothing accrues. */
+  freeDays: number;
+  /** FC-07 §03a — `max(0, totalDays - freeDays) + supplementDays`. The only period priced. */
   chargeableDays: number;
   supplementDays: number;
 
@@ -108,11 +150,22 @@ export function surchargesFor(cargoClassId: number, base: Amount) {
 /**
  * The FC-07 §01–08 chain, computed end to end. Every intermediate is kept
  * so the calculator screen can show each step rather than just a total.
+ *
+ * The dwell arithmetic lives HERE and nowhere else. It used to arrive as a
+ * pre-computed `totalDays`, which meant the flow's "clock starts" step had
+ * no code behind it and every caller was free to start the clock wherever it
+ * liked — fixtures started it at flight arrival, which billed the ramp. The
+ * function now takes the two endpoints (`intakeAt` … `asOf`) and derives the
+ * period itself, so there is exactly one place the clock can start.
  */
 export function calculateCharges(input: {
   awbId: number;
+  /** FC-07 §01 — flight arrival. Carried through for display; never priced. */
   arrivalAt: string;
-  totalDays: number;
+  /** FC-07 §02 — recorded cargo intake (the AWB's `intakeAt`). The clock starts here. */
+  intakeAt: string;
+  /** The instant dwell is measured to — delivery date, or "now" for a live quote. */
+  asOf: string;
   cargoClassId: number;
   cargoSubClassId: number;
   actualKg: number;
@@ -124,17 +177,44 @@ export function calculateCharges(input: {
   tariffVersion?: string;
   calculatedAt?: string;
   taxPercent?: number;
+  /**
+   * CMTS `CHARGECALCULATER.VOUCHERNO`. Optional on the way IN and required on
+   * the way out, which is deliberate: a live quote has no voucher to name yet,
+   * so callers pricing one simply omit it and the result records null rather
+   * than the caller having to remember to pass a null through. Callers
+   * recalling the working behind an already-raised voucher pass its number.
+   */
+  voucherNo?: string | null;
 }): ChargeCalculation {
   const cls = cargoClass(input.cargoClassId);
   const sub = cargoSubClass(input.cargoSubClassId);
 
+  // FC-07 §02 — the storage clock starts at cargo intake. Flight arrival is
+  // deliberately not used: see the AWB.arrivedAt / AWB.intakeAt distinction.
+  const clockStartedAt = input.intakeAt;
+
+  // Dwell — step two feeding step three. Whole days from clock start to `asOf`;
+  // daysBetween floors and clamps at zero, so an `asOf` before intake reads 0
+  // rather than producing a negative (and therefore a credit) period.
+  const totalDays = daysBetween(clockStartedAt, input.asOf);
+
+  // FC-07 §03 — the free / grace period, counted from the clock start.
   const freeDays = cls.freeDays;
   const supplementDays = input.supplementDays ?? 0;
-  const chargeableDays = Math.max(0, input.totalDays - freeDays) + supplementDays;
+
+  // FC-07 §03a — chargeable period = dwell − free period. Only now does
+  // anything become billable, and only these days reach the slabs below.
+  const chargeableDays = Math.max(0, totalDays - freeDays) + supplementDays;
   const chargeableKg = round2(Math.max(input.actualKg, input.volumetricKg));
 
-  const slabLines = slabBreakdown(chargeableDays, chargeableKg);
-  const storageAmount = round2(slabLines.reduce((n, l) => n + l.amount, 0));
+  // Cargo still inside its free period must produce exactly zero storage.
+  // slabBreakdown already yields no lines at chargeableDays === 0, but that is
+  // a consequence of its band arithmetic rather than a stated rule; asserting
+  // it here means a future change to the band loop cannot start billing the
+  // grace period by accident.
+  const slabLines = chargeableDays > 0 ? slabBreakdown(chargeableDays, chargeableKg) : [];
+  const storageAmount =
+    chargeableDays > 0 ? round2(slabLines.reduce((n, l) => n + l.amount, 0)) : 0;
 
   const handlingAmount = round2(chargeableKg * (input.handlingRatePerKg ?? 12));
   const locationChargesAmount = round2(chargeableDays * (input.locationChargePerDay ?? 0));
@@ -160,11 +240,13 @@ export function calculateCharges(input: {
 
   return {
     awbId: input.awbId,
+    VOUCHERNO: input.voucherNo ?? null,
     tariffVersion: input.tariffVersion ?? "TARIFF-2026.2",
-    calculatedAt: input.calculatedAt ?? input.arrivalAt,
+    calculatedAt: input.calculatedAt ?? input.asOf,
     arrivalAt: input.arrivalAt,
+    clockStartedAt,
+    totalDays,
     freeDays,
-    totalDays: input.totalDays,
     chargeableDays,
     supplementDays,
     actualKg: round2(input.actualKg),
@@ -385,6 +467,21 @@ export function waiverStatus(levels: ApprovalLevel[]): ApprovalDecision {
 
 /* ================================================================== *
  * Delivery Order — CMTS `AWBDELEIVERYORDER` (39), all columns
+ *
+ * FC-01 §22 is TWO events on one record, not one:
+ *
+ *   22a  DO requested — by the CHA, after the NOA (§18) reaches them.
+ *        A request carries no release authority whatsoever. It records
+ *        intent and starts the clock on the terminal's side.
+ *   22b  DO issued — by the terminal, only once charges are settled AND
+ *        `evaluateReleaseGate` clears. Issuance snapshots that evaluation
+ *        onto the record so an auditor can see which conditions were true
+ *        at the moment authority was granted, rather than re-deriving them
+ *        later against facts that have since moved.
+ *
+ * Modelling them as one field is what let the pre-P0 demo show a "RELEASABLE
+ * / n BLOCK" badge against a DO that had already been issued — a verdict on
+ * an event that was over. Keep the two timestamps distinct.
  * ================================================================== */
 
 export interface DeliveryOrder extends DomainRecord {
@@ -394,7 +491,51 @@ export interface DeliveryOrder extends DomainRecord {
   HWBNO: string | null;
   DONO: string;
   docNumber: DocNumberRef;
-  DODATE: string;
+  /**
+   * Where the record stands between 22a and 22b, and after.
+   *
+   *   requested  22a done, 22b not — no release authority
+   *   issued     22b done — authority granted, gate snapshot present
+   *   collected  the CHA has taken it (FC-02 §33)
+   *   cancelled  withdrawn before or after issue
+   */
+  status: "requested" | "issued" | "collected" | "cancelled";
+
+  /* --- FC-01 §22a — requested by the CHA, after the NOA --- */
+  /** ISO — when the CHA raised the request. Always set; a DO record starts here. */
+  requestedAt: string;
+  /** The CHA / agent who requested it. */
+  requestedBy: string;
+  /** ISO of the NOA (§18) this request follows, when one was issued. */
+  requestedAgainstNoaAt: string | null;
+
+  /* --- FC-01 §22b — issued by the terminal, after payment + release gate --- */
+  /** ISO — null until 22b. `DODATE` mirrors this for CMTS parity. */
+  issuedAt: string | null;
+  /** Terminal user who issued it. Null until 22b. */
+  issuedBy: string | null;
+  /** ISO of the release-gate evaluation that permitted issuance. Null until 22b. */
+  gateEvaluatedAt: string | null;
+  /**
+   * The five conditions exactly as they read at issuance — the audit artefact.
+   * Screens showing an ISSUED DO must render this, not a live re-evaluation:
+   * a condition that has since gone stale does not retract authority already
+   * granted, and showing today's verdict against yesterday's issue is how the
+   * DO screen came to display a block on a DO that was already out the door.
+   */
+  gateSnapshot: ReleaseCondition[] | null;
+
+  /**
+   * CMTS `DODATE` — the legacy single date column, kept for migration parity.
+   * It is the 22b ISSUE date and nothing else, and mirrors `issuedAt`. Do not
+   * overload it with the 22a request date; that is `requestedAt`.
+   *
+   * Null while the record is still at 22a. CMTS had no requested state, so a
+   * legacy row simply did not exist until issue — null is the faithful
+   * representation of "no legacy row yet", and matches `AWB.DODATE`, which is
+   * already `string | null` for the same reason.
+   */
+  DODATE: string | null;
   DOTYPE: string;
   DOCARGOCLASSID: number;
   AMOUNT: Amount;
@@ -436,10 +577,23 @@ export interface DeliveryOrder extends DomainRecord {
  *
  * The flow fans out to five conditions that all converge on
  * "G.Rent Voucher issued". Treated as AND pending BLK-10.
+ *
+ * This gate is the authority behind FC-01 §22b: nothing issues a Delivery
+ * Order without it clearing. Ask `canIssueDo()` below rather than reading
+ * `canRelease` directly, so issuance has one enforcement point.
  * ================================================================== */
 
+/**
+ * `"ooc-verified-vs-sd"` was `"ooc-available"`. Availability was never the
+ * condition the flow meant: an Out-of-Charge can be captured, sit on the
+ * record and still disagree with the Single Declaration it is supposed to
+ * discharge. The code now names what is actually tested — the field-by-field
+ * verification. The rename is deliberately visible, because
+ * GateOutCheck.newlyFailedConditions renders these codes to operators as chips
+ * and the old wording would have kept promising a check nobody performed.
+ */
 export type ReleaseConditionCode =
-  | "ooc-available"
+  | "ooc-verified-vs-sd"
   | "authority-verified"
   | "charges-paid"
   | "not-on-hold"
@@ -469,8 +623,23 @@ export interface ReleaseGate {
 export function evaluateReleaseGate(
   awbId: number,
   facts: {
+    /** An OOC record exists against the AWB — capture only, no authority on its own. */
     oocIssued: boolean;
     oocRef?: string | null;
+    /**
+     * The captured OOC has been reconciled field-by-field against the Single
+     * Declaration and every field agrees — `oocVerified()` in ./customs.
+     *
+     * REQUIRED, not optional, and deliberately so. As an optional flag every
+     * caller could omit it and silently fall back to the old behaviour where
+     * issuance alone released the cargo; as a required one, the compiler makes
+     * each call site state whether verification happened.
+     */
+    oocVerifiedVsSd: boolean;
+    /** Fields that disagreed with the SD — `oocMismatches().length`. 0 when none. */
+    oocMismatchCount: number;
+    oocVerifiedAt: string | null;
+    oocVerifiedBy: string | null;
     authorityLetterNo?: string | null;
     chargesPaid: boolean;
     outstanding?: Amount;
@@ -482,15 +651,39 @@ export function evaluateReleaseGate(
 ): ReleaseGate {
   const cls = cargoClass(facts.cargoClassId);
 
+  // The old detail string asserted the OOC was "verified against the
+  // declaration" while the condition tested nothing but its existence — the
+  // screen therefore told operators a check had happened that had not. Three
+  // honest states replace it: nothing captured, captured but unreconciled, and
+  // reconciled (with the evidence of who did it and when).
+  const oocRef = facts.oocRef ?? "(no reference)";
+  const oocDetail = !facts.oocIssued
+    ? "No Out-of-Charge captured against this AWB"
+    : !facts.oocVerifiedVsSd
+      ? facts.oocMismatchCount > 0
+        ? `Out-of-Charge ${oocRef} captured but NOT verified — ${facts.oocMismatchCount} field${
+            facts.oocMismatchCount === 1 ? "" : "s"
+          } disagree with the Single Declaration`
+        : `Out-of-Charge ${oocRef} captured but not yet reconciled field-by-field against the Single Declaration`
+      : `Out-of-Charge ${oocRef} verified field-by-field against the Single Declaration by ${
+          facts.oocVerifiedBy ?? "an unrecorded user"
+        }${facts.oocVerifiedAt ? ` on ${facts.oocVerifiedAt}` : ""}`;
+
   const conditions: ReleaseCondition[] = [
     {
-      code: "ooc-available",
-      label: "OOC available",
-      pass: facts.oocIssued,
-      detail: facts.oocIssued
-        ? `Out-of-Charge ${facts.oocRef ?? ""} verified against the declaration`
-        : "No Out-of-Charge recorded against this AWB",
-      href: "/excise-compliance/ooc-capture",
+      code: "ooc-verified-vs-sd",
+      label: "OOC verified against SD",
+      // Both halves, and the capture half alone is worth nothing. This is the
+      // edge the signed-off decision removes: OOC issued no longer implies
+      // eligible for release. It fails closed — an OOC that exists but has not
+      // been reconciled blocks exactly as hard as no OOC at all.
+      pass: facts.oocIssued && facts.oocVerifiedVsSd,
+      detail: oocDetail,
+      // The verification itself is performed on the customs channels screen.
+      // The keying path that produces an OOC when the PSW gateway is down now
+      // lives at /customs/ooc-capture; this gate links at the reconciliation,
+      // not the capture, because what blocks release is the unreconciled OOC.
+      href: "/customs/channels",
       applicable: true,
     },
     {
@@ -518,7 +711,10 @@ export function evaluateReleaseGate(
       label: "Cargo not on hold",
       pass: !facts.onHold,
       detail: facts.onHold ? (facts.holdReason ?? "Hold is live") : "No live hold",
-      href: "/excise-compliance/hold-register",
+      // The hold register merged into the canonical exceptions screen, which is
+      // the one place that both renders the seven HOLDINGSTATUS release columns
+      // and carries the action that populates them.
+      href: "/exceptions/holds",
       applicable: true,
     },
     {
@@ -532,13 +728,63 @@ export function evaluateReleaseGate(
           ? "ANF / ASF / agency clearance recorded"
           : `${cls.ABBREVATION} requires special clearance — not recorded`
         : `Not required for ${cls.ABBREVATION}`,
-      href: "/excise-compliance/customs-queue",
+      // The tabular customs work queue relocated into the customs portal. It is
+      // the right target for this condition because special clearance is worked
+      // from the queue, not from the master-detail channels viewer.
+      href: "/customs/queue",
       applicable: cls.requiresSpecialClearance,
     },
   ];
 
   const blockedBy = conditions.filter((c) => c.applicable && !c.pass);
   return { awbId, conditions, canRelease: blockedBy.length === 0, blockedBy };
+}
+
+/**
+ * FC-01 §22b — the single enforcement point for DO ISSUANCE.
+ *
+ * Every screen that offers an "Issue DO" action must ask this rather than
+ * re-deriving the rule; the pre-P0 demo let each screen decide for itself and
+ * the record ended up existing regardless of what the gate said.
+ *
+ * PAYMENT IS FOLDED INTO THE GATE, NOT A SEPARATE PRECONDITION. "DO charges
+ * paid" is already condition 3 of the five, so a caller that additionally
+ * required payment on the side would be testing the same fact twice and would
+ * eventually disagree with itself. `facts.chargesPaid` is therefore NOT a
+ * second hurdle — it is the caller's live payment fact, checked only for
+ * disagreement with the gate. If the gate was evaluated when the invoice read
+ * paid and the caller now knows it is not, issuance fails closed on a
+ * synthesised failure of condition 3 rather than trusting the older snapshot.
+ * A caller with nothing fresher passes the gate's own answer straight back.
+ */
+export function canIssueDo(
+  gate: ReleaseGate,
+  facts: { chargesPaid: boolean },
+): { ok: boolean; blockedBy: ReleaseCondition[]; reason: string | null } {
+  const charges = gate.conditions.find((c) => c.code === "charges-paid");
+
+  const stalePayment: ReleaseCondition | null =
+    charges && charges.applicable && charges.pass && !facts.chargesPaid
+      ? {
+          ...charges,
+          pass: false,
+          detail:
+            "Charges were settled when the gate was evaluated but are outstanding now — re-evaluate before issuing",
+        }
+      : null;
+
+  const blockedBy = stalePayment ? [...gate.blockedBy, stalePayment] : gate.blockedBy;
+  const ok = blockedBy.length === 0;
+
+  return {
+    ok,
+    blockedBy,
+    reason: ok
+      ? null
+      : `DO cannot be issued — ${blockedBy.length} of ${
+          gate.conditions.filter((c) => c.applicable).length
+        } release conditions unmet: ${blockedBy.map((c) => c.label).join(", ")}`,
+  };
 }
 
 /* ================================================================== *

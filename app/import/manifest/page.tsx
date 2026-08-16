@@ -13,7 +13,15 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, ArrowUpRight, Download, Lock, Search, Unlock } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Database,
+  Download,
+  Lock,
+  Search,
+  Unlock,
+} from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import AwbLink from "@/components/awb/AwbLink";
 import UldReconciliation from "@/components/import/UldReconciliation";
@@ -40,6 +48,32 @@ const RECON_STATUS_META: Record<ReconStatus, { bg: string; fg: string }> = {
 };
 
 const RECON_STATUS_FILTERS = ["All", "Match", "Shortage", "Overage", "Wrong weight"] as const;
+
+/**
+ * CMTS source tables behind the reconciliation.
+ *
+ * The legacy manifest-reconciliation screen footed itself with four table
+ * names; this screen cited only IMPORTMANIFIEST (plus CUSTOMIGM, which the
+ * legacy screen never modelled). Two names were dropped, and they are the two
+ * that answer the questions the reconciliation table actually raises:
+ * IMPORTAWBDETAIL is where the declared-versus-received pairs come from, and
+ * IMPORTAWBLOCATION is where a reconciled AWB goes once the IGM closes. Both
+ * are cited on other screens — acceptance and storage — but a reader tracing
+ * the legacy footer has to be able to land here, so all five are named.
+ */
+const CMTS_SOURCE_TABLES = [
+  { table: "IMPORTMANIFIEST", meaning: "Manifest header — 31 columns, rendered above" },
+  { table: "CUSTOMIGM", meaning: "Customs IGM header — 17 columns, shared with P4-2" },
+  { table: "IMPORTAWB", meaning: "One row per manifested AWB — the reconciliation rows" },
+  {
+    table: "IMPORTAWBDETAIL",
+    meaning: "Declared vs received pieces and weight behind each row",
+  },
+  {
+    table: "IMPORTAWBLOCATION",
+    meaning: "Where a reconciled AWB is put away once the IGM closes",
+  },
+];
 
 export default function ManifestReconciliationPage() {
   const { scope } = useSite();
@@ -182,12 +216,24 @@ export default function ManifestReconciliationPage() {
           </span>
         </div>
         <div className="p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-5 gap-y-4">
+          {/* AIRLINENAME sits beside AIRLINEID and ABBREVATION rather than
+              replacing them: all three are separate IMPORTMANIFIEST columns and
+              the manifest carries the carrier's full name in its own right, so
+              a reconciliation dispute quoting "Emirates" can be matched without
+              anyone resolving a two-letter code by hand.
+
+              DFLAG is rendered exactly as stored. Its value set is unconfirmed —
+              the restored CMTS database is schema-only, so the column's type and
+              nullability are known and its domain is not — and a legend invented
+              on this screen would read as verified meaning. See the footnote
+              below the grid. */}
           {(
             [
               ["IGMNO", m.IGMNO],
               ["REGNO", m.REGNO],
               ["FLIGHT", m.FLIGHT],
               ["AIRLINEID", m.AIRLINEID],
+              ["AIRLINENAME", m.AIRLINENAME],
               ["ABBREVATION", m.ABBREVATION],
               ["ORIGIN", m.ORIGIN],
               ["DESTINATION", m.DESTINATION],
@@ -198,6 +244,7 @@ export default function ManifestReconciliationPage() {
               ["MANIFESTSTATUS", m.MANIFESTSTATUS],
               ["STATUS1", m.STATUS1],
               ["STATUS2", m.STATUS2],
+              ["DFLAG", m.DFLAG ?? "—"],
               ["MANIFESTNIL", m.MANIFESTNIL ?? "—"],
               ["USERID", m.USERID],
               ["TRNO", m.TRNO ?? "—"],
@@ -206,9 +253,18 @@ export default function ManifestReconciliationPage() {
           ).map(([k, v]) => (
             <div key={k} className="flex flex-col gap-1">
               <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-              <span className="text-[13px] font-medium text-[#0F172A] truncate">{v}</span>
+              <span className="text-[13px] font-medium text-[#0F172A] truncate" title={String(v)}>
+                {v}
+              </span>
             </div>
           ))}
+        </div>
+        <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+          <p className="text-[11px] text-[#64748B]">
+            DFLAG is a legacy single-character flag shown verbatim. No label is put against it here:
+            the CMTS restore is schema-only, so what each character means is unconfirmed with SAPS
+            and a decoded legend would claim knowledge nobody has yet.
+          </p>
         </div>
       </div>
 
@@ -507,6 +563,30 @@ export default function ManifestReconciliationPage() {
             <div key={k} className="flex flex-col gap-1">
               <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
               <span className="text-[13px] font-medium text-[#0F172A] truncate">{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* CMTS source tables — see CMTS_SOURCE_TABLES above for why the legacy
+          footer's IMPORTAWBDETAIL and IMPORTAWBLOCATION are named here. */}
+      <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+          <Database size={15} className="text-[#64748B]" />
+          <div>
+            <h3 className="text-[14px] font-semibold text-[#0F172A]">CMTS source tables</h3>
+            <p className="text-[11px] text-[#94A3B8]">
+              What this screen absorbs from the legacy manifest-reconciliation module
+            </p>
+          </div>
+        </div>
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-2.5">
+          {CMTS_SOURCE_TABLES.map((t) => (
+            <div key={t.table} className="flex items-baseline gap-2">
+              <span className="font-mono text-[11px] font-semibold text-[#1B4F8B] flex-shrink-0">
+                {t.table}
+              </span>
+              <span className="text-[11px] text-[#64748B]">{t.meaning}</span>
             </div>
           ))}
         </div>

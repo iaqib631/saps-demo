@@ -20,24 +20,47 @@
  * BLK-10: `special-clearance` is **conditional** on the cargo class rather
  * than universal — it renders N/A instead of blocking, because the FC-07
  * amendment lists only four conditions and the fifth appears on the chart.
+ *
+ * **Parity pass.** The last eight `AWBDELEIVERYORDER` columns land here, in
+ * the three places they belong rather than as a strip at the foot of the page:
+ * `IGMNO` / `HWBNO` / `SHIFT` into a consignment-reference card, `TAX` into
+ * the money block it modifies, and `ISLOCK` / `DUPLICATEREASON` / `REASON` /
+ * `FIRDATE` into a record-state card, because those four describe the state of
+ * the *order* and not of the cargo it releases.
  */
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, BadgeCheck, IdCard, ShieldCheck, XCircle } from "lucide-react";
+import { ArrowUpRight, BadgeCheck, FileText, IdCard, ShieldCheck, XCircle } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
+import DoExceptionCard from "@/components/billing/delivery-order/DoExceptionCard";
+import DoField from "@/components/billing/delivery-order/DoField";
 import { AuditStrip, DocNumber } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
+  TAX_TYPES,
   awbByNo,
   cargoClass,
   formatDate,
   formatPkr,
   listDeliveryOrders,
   releaseGateFor,
+  round2,
 } from "@/lib/domain";
+
+/**
+ * The DO charge is taxed through the one `TaxType` row flagged `IsDo`, and the
+ * godown-rent voucher next door bills through the rows that are not. Resolving
+ * the row rather than printing the stored percentage on its own is the whole
+ * point: both families currently read the same rate, so an unlabelled "15%"
+ * here is read as the rent tax carried forward rather than a second charge.
+ */
+const DO_TAX_TYPE = TAX_TYPES.find((t) => t.IsDo) ?? null;
+const NON_DO_TAX_LABEL = TAX_TYPES.filter((t) => !t.IsDo)
+  .map((t) => `${t.Description} ${t.Amount}%`)
+  .join(", ");
 
 export default function DeliveryOrderPage() {
   const { scope, isHq } = useSite();
@@ -47,6 +70,14 @@ export default function DeliveryOrderPage() {
   const d = dos.find((x) => x.DONO === selected) ?? dos[0] ?? null;
   const awb = d ? awbByNo(d.AWBNO) : null;
   const gate = awb ? releaseGateFor(awb.AWBId) : null;
+
+  /**
+   * `AMOUNT` is the airline's flat `AIRLINE.DOAMOUNT` and is net of tax, so the
+   * gross is derived here rather than stored. It is derived and not seeded on
+   * purpose: a stored gross would go stale the moment the `TaxType` rate moves
+   * and would then disagree with the rate printed beside it.
+   */
+  const doTaxAmount = d ? round2((d.AMOUNT * d.Tax) / 100) : 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -117,8 +148,14 @@ export default function DeliveryOrderPage() {
                     <p className="text-[11px] text-[#64748B] mt-0.5">
                       {x.AWBNO} · {formatPkr(x.AMOUNT)}
                     </p>
+                    {/* 22a vs 22b. A requested DO has no issue date yet, so show
+                        the request rather than a blank where a date should be. */}
                     <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                      {formatDate(x.DODATE)} · {x.RECIEVEDBY}
+                      {x.DODATE
+                        ? `Issued ${formatDate(x.DODATE)}`
+                        : `Requested ${formatDate(x.requestedAt)} — awaiting issue`}
+                      {" · "}
+                      {x.RECIEVEDBY}
                     </p>
                   </button>
                 );
@@ -150,7 +187,11 @@ export default function DeliveryOrderPage() {
                     <p className="text-[12px] text-[#64748B] mt-1.5">
                       {awb && <AwbLink awbNo={awb.AWBNO} awbId={awb.AWBId} />}
                       {" · "}
-                      {cargoClass(d.DOCARGOCLASSID).ABBREVATION} · issued {formatDate(d.DODATE)}
+                      {cargoClass(d.DOCARGOCLASSID).ABBREVATION}
+                      {" · "}
+                      {d.DODATE
+                        ? `issued ${formatDate(d.DODATE)}`
+                        : `requested ${formatDate(d.requestedAt)}, awaiting issue`}
                     </p>
                   </div>
                   <div className="text-right">
@@ -162,11 +203,98 @@ export default function DeliveryOrderPage() {
                     </p>
                   </div>
                 </div>
+                {/* DO tax. Given its own strip under the amount rather than a
+                    figure tucked beside it, because the one conclusion a reader
+                    must not reach is that this is the tax they already saw on
+                    the godown-rent voucher. It is a separate master row, and
+                    naming the row on screen is what makes that visible while
+                    the two percentages happen to coincide. */}
+                <div className="mt-3 pt-3 border-t border-[#F1F5F9] flex items-end justify-between gap-4 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[9px] font-mono text-[#CBD5E1]" title="CMTS column: TAX">
+                        TAX
+                      </span>
+                      <span className="h-[16px] px-1.5 rounded bg-[#EBF0F7] text-[#1B4F8B] text-[9px] font-bold inline-flex items-center font-mono">
+                        TaxType.IsDo = 1
+                      </span>
+                    </div>
+                    <p className="text-[13px] font-medium text-[#0F172A] mt-0.5">
+                      {d.Tax}% · {DO_TAX_TYPE?.Description ?? "DO tax"}
+                    </p>
+                    <p className="text-[11px] text-[#64748B] mt-1 max-w-[52ch]">
+                      Not the godown-rent tax. Rent bills through the{" "}
+                      <span className="font-mono">IsDo = 0</span> rows ({NON_DO_TAX_LABEL}); the DO
+                      charge bills through the single row flagged for delivery orders. The rates
+                      read alike today, which is exactly why the row is named — moving one does not
+                      move the other.
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                      {d.FREE ? "Would be payable" : "Payable with DO tax"}
+                    </p>
+                    <p
+                      className="text-[16px] font-bold font-mono"
+                      style={{ color: d.FREE ? "#94A3B8" : "#0B2545" }}
+                    >
+                      {formatPkr(round2(d.AMOUNT + doTaxAmount))}
+                    </p>
+                    <p className="text-[11px] text-[#64748B]">
+                      {formatPkr(d.AMOUNT)} + {formatPkr(doTaxAmount)} tax
+                    </p>
+                  </div>
+                </div>
                 {d.FREE && d.FREECAUSE && (
                   <p className="text-[12px] text-[#15803D] mt-3 pt-3 border-t border-[#F1F5F9]">
-                    Free cause: {d.FREECAUSE}
+                    Free cause: {d.FREECAUSE} — neither the charge nor the tax is collected; the
+                    figures above stand as the rate on file.
                   </p>
                 )}
+              </div>
+
+              {/* Consignment reference — the numbers AWBDELEIVERYORDER is keyed
+                  on. IGMNO and HWBNO say nothing apart from the AWBNO that sits
+                  between them, so the master waybill is repeated here even
+                  though the header already links it: read as a triple they
+                  answer "which manifest, which master, which house" in one
+                  line, and splitting them across two cards is what makes an
+                  operator go hunting in the header for the middle term. */}
+              <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+                  <FileText size={15} className="text-[#64748B]" />
+                  <div>
+                    <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                      Consignment reference &amp; shift
+                    </h3>
+                    <p className="text-[11px] text-[#94A3B8]">
+                      Which manifest, which master, which house — and the shift that issued the
+                      order
+                    </p>
+                  </div>
+                </div>
+                <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-4">
+                  <DoField cmts="IGMNO" value={d.IGMNO} />
+                  <DoField
+                    cmts="AWBNO"
+                    value={
+                      awb ? <AwbLink awbNo={awb.AWBNO} awbId={awb.AWBId} /> : d.AWBNO
+                    }
+                  />
+                  <DoField cmts="HWBNO" value={d.HWBNO} />
+                  <DoField cmts="SHIFT" value={d.SHIFT} />
+                </div>
+                <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+                  <p className="text-[11px] text-[#64748B]">
+                    <span className="font-mono">HWBNO</span> is null on a straight master waybill
+                    and fills only where the master was consolidated — a DO raised against a house
+                    releases that house alone, which is why the column sits on the order rather
+                    than being read off the AWB.{" "}
+                    <span className="font-mono">SHIFT</span> is the operating shift the counter
+                    issued on, carried so a disputed collection can be put to the crew that was on
+                    duty. It is not a second issue date.
+                  </p>
+                </div>
               </div>
 
               {/* The five-condition gate */}
@@ -296,15 +424,7 @@ export default function DeliveryOrderPage() {
                       ["STN", d.STN],
                     ] as const
                   ).map(([k, v]) => (
-                    <div key={k} className="flex flex-col gap-1">
-                      <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-                      <span
-                        className="text-[13px] font-medium break-words"
-                        style={{ color: v ? "#0F172A" : "#CBD5E1" }}
-                      >
-                        {v ?? "null"}
-                      </span>
-                    </div>
+                    <DoField key={k} cmts={k} value={v} />
                   ))}
                 </div>
                 {d.DetendIdentification && (
@@ -317,6 +437,12 @@ export default function DeliveryOrderPage() {
                   </div>
                 )}
               </div>
+
+              {/* Record state and the exception columns — placed after the
+                  routine blocks because that is the order the counter reads
+                  in: identity, gate, who is collecting, and only then whether
+                  anything is wrong with the order itself. */}
+              <DoExceptionCard order={d} />
 
               <div className="flex items-center gap-3 flex-wrap">
                 <Link

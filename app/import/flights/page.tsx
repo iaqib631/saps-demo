@@ -301,7 +301,12 @@ export default function FlightBoardPage() {
         </div>
       )}
 
-      {/* Airline reference — DOBYSAPS / DOAMOUNT drive DO charging in Phase 5 */}
+      {/* Airline reference — DOBYSAPS / DOAMOUNT drive DO charging in Phase 5.
+       *
+       * Every column in this table is a real CMTS AIRLINE column, so each one
+       * is labelled with its column name: the card is the parity view for the
+       * table and a reader has to be able to check it against the schema
+       * without opening the domain file. */}
       <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
         <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
           <h3 className="text-[14px] font-semibold text-[#0F172A]">Airline reference</h3>
@@ -313,21 +318,79 @@ export default function FlightBoardPage() {
           <table className="w-full text-[13px]">
             <thead>
               <tr className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider bg-[#F8FAFC] border-b border-[#E2E8F0]">
-                <th className="text-left px-4 py-2.5">Code</th>
-                <th className="text-left px-4 py-2.5">Airline</th>
-                <th className="text-left px-4 py-2.5">Country</th>
-                <th className="text-left px-4 py-2.5">DO by SAPS</th>
-                <th className="text-right px-4 py-2.5">DO amount</th>
-                <th className="text-left px-4 py-2.5">Scheduled</th>
-                <th className="text-left px-4 py-2.5">IATA approved</th>
+                <th className="text-left px-4 py-2.5">
+                  Code <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">AIRLINEID</span>
+                </th>
+                {/* ABBREVATION is varchar(15) and AIRLINEID is the IATA code —
+                    legacy allows a house abbreviation that is not the code, so
+                    the two are shown side by side rather than one standing in
+                    for the other. They match on today's data; that is a
+                    property of the data, not of the schema. */}
+                <th className="text-left px-4 py-2.5">
+                  Abbr <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">ABBREVATION</span>
+                </th>
+                <th className="text-left px-4 py-2.5">
+                  Airline <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">DESCRIPTION</span>
+                </th>
+                <th className="text-left px-4 py-2.5">
+                  Country <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">COUNTRY</span>
+                </th>
+                <th className="text-left px-4 py-2.5">
+                  Logo <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">LOGO</span>
+                </th>
+                <th className="text-left px-4 py-2.5">
+                  DO by SAPS <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">DOBYSAPS</span>
+                </th>
+                <th className="text-right px-4 py-2.5">
+                  DO amount <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">DOAMOUNT</span>
+                </th>
+                <th className="text-left px-4 py-2.5">
+                  Scheduled <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">SCHEDULED</span>
+                </th>
+                <th className="text-left px-4 py-2.5">
+                  IATA <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">APPROVEDBYIATA</span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {AIRLINES.map((a) => (
                 <tr key={a.ID} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC] transition-colors">
                   <td className="px-4 py-2.5 font-mono font-semibold">{a.AIRLINEID}</td>
+                  <td className="px-4 py-2.5 font-mono text-[12px] text-[#64748B]">{a.ABBREVATION}</td>
                   <td className="px-4 py-2.5">{a.DESCRIPTION}</td>
                   <td className="px-4 py-2.5 text-[#64748B]">{a.COUNTRY}</td>
+                  {/* LOGO is a path into the legacy CMTS image share, not a URL
+                      and not the artwork. AirVault has no asset pipeline, so
+                      pointing an <img> at it would give every carrier a broken
+                      image icon. The tile below is a text stand-in built from
+                      ABBREVATION, and the migration value itself is rendered
+                      verbatim beside it — that string, not a picture, is what
+                      has to survive the migration and be checkable here. */}
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="w-7 h-7 rounded flex-shrink-0 inline-flex items-center justify-center font-mono text-[9px] font-bold"
+                        style={{
+                          backgroundColor: a.LOGO ? "#F1F5F9" : "transparent",
+                          color: a.LOGO ? "#64748B" : "#CBD5E1",
+                          border: a.LOGO ? "1px solid #E2E8F0" : "1px dashed #E2E8F0",
+                        }}
+                        title={a.LOGO ? `Logo on file — ${a.LOGO}` : "No logo on file"}
+                      >
+                        {a.ABBREVATION}
+                      </span>
+                      {a.LOGO ? (
+                        <span
+                          className="font-mono text-[11px] text-[#94A3B8] truncate max-w-[190px]"
+                          title={a.LOGO}
+                        >
+                          {a.LOGO}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-[#CBD5E1]">No logo on file</span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-2.5">
                     <span
                       className="h-[20px] px-2 rounded text-[10px] font-bold inline-flex items-center"
@@ -346,6 +409,13 @@ export default function FlightBoardPage() {
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+          <p className="text-[11px] text-[#64748B]">
+            LOGO is a server-relative path into the legacy CMTS image share, carried across as an
+            opaque string — the artwork itself does not migrate with it, and NULL is a normal value
+            because legacy never required a logo on file.
+          </p>
         </div>
       </div>
     </div>

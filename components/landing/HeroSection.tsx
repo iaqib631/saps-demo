@@ -56,7 +56,7 @@ export default function HeroSection() {
 
           <div className="flex items-center gap-4 pt-2">
             <button
-              onClick={() => router.push("/uld-message-builder/sign-in")}
+              onClick={() => router.push("/login")}
               className="h-12 px-8 rounded-full text-[15px] font-semibold text-white cursor-pointer transition-all duration-300 whitespace-nowrap hover:shadow-xl hover:scale-[1.04] active:scale-[0.97]"
               style={{ background: "linear-gradient(135deg, #7EC8E3, #5BA4C5)", boxShadow: "0 8px 32px rgba(91,164,197,0.3)" }}
             >

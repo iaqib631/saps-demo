@@ -13,8 +13,11 @@
  *     alongside so an operator reading a CMTS-era document can still follow.
  *   • SD status, risk channel and OOC are **fetched electronically**, not
  *     typed. `fetchedAt` on those records is what makes that visible.
- *   • **OOC is fetched from PSW (or keyed from the print) and verified
- *     against the SD** — the verification is the control, not the capture.
+ *   • **OOC is captured — PSW fetch, counter scan, or keyed from the print
+ *     — and then verified against the SD** — the verification is the
+ *     control, not the capture. Issuance releases nothing on its own:
+ *     `SdStatus` carries an explicit `ooc-verified` state and `released` is
+ *     only reachable through it.
  *     Drawn as an OCR step; converted once SAPS confirmed OCR is limited
  *     to the two scan points. See the SCOPE note in `common.ts`.
  *
@@ -178,6 +181,15 @@ export type SdStatus =
   | "duty-paid"
   | "agency-clearance"
   | "ooc-issued"
+  /**
+   * The OOC has been reconciled field-by-field against the SD with no
+   * mismatches. This state exists so the forbidden edge is unrepresentable:
+   * `released` sits below it in the union because issuance alone never made
+   * cargo releasable, and a status model that ran "ooc-issued" straight into
+   * "released" let every screen draw the two as adjacent. `oocVerified()`
+   * is what separates them.
+   */
+  | "ooc-verified"
   | "released";
 
 export const SD_STATUS_LABEL: Record<SdStatus, string> = {
@@ -191,6 +203,7 @@ export const SD_STATUS_LABEL: Record<SdStatus, string> = {
   "duty-paid": "Duty and taxes paid",
   "agency-clearance": "ANF / ASF clearance",
   "ooc-issued": "Out-of-charge issued",
+  "ooc-verified": "Out-of-charge verified against SD",
   released: "Eligible for release",
 };
 
@@ -259,14 +272,17 @@ export interface AgencyClearance {
  *
  * FC-06 originally drew OOC capture as an OCR step. SAPS has since
  * confirmed OCR runs at two points only — MAWB/HAWB off the flight pouch,
- * and the receiver's documents at collection — so OOC is captured either
- * by **electronic fetch from PSW** or, when the gateway is down, **keyed
- * from the OOC print**.
+ * and the receiver's documents at collection — so OOC is captured by
+ * **electronic fetch from PSW**, by **scanning the OOC print** at the
+ * counter, or, with both unavailable, **keyed from the print**.
  *
  * The control that mattered is untouched and is the point of this block:
  * however the value arrives, it is **verified field-by-field against the
  * SD**. A document nobody reconciled is not a control — the mismatch list
- * below is the control.
+ * below is the control. Capture and verification are two events, and the
+ * gates only ever read the second: `oocVerified()` is what FC-06's
+ * clearance gate and FC-07's release gate both consult, so an OOC that has
+ * been issued but not reconciled releases nothing.
  * ================================================================== */
 
 export type OocVerifyField = "sdRef" | "awbNo" | "channel" | "packages" | "issuedAt";
@@ -274,7 +290,7 @@ export type OocVerifyField = "sdRef" | "awbNo" | "channel" | "packages" | "issue
 export interface OocFieldCheck {
   field: OocVerifyField;
   label: string;
-  /** What the OOC document carries — fetched from PSW or keyed off the print. */
+  /** What the OOC document carries, however it was captured — see `source`. */
   captured: FormValue<string>;
   /** What the SD says. */
   expected: string;
@@ -284,9 +300,23 @@ export interface OocFieldCheck {
 export interface OutOfCharge {
   oocNo: string;
   docNumber: DocNumberRef;
-  /** Electronically fetched from PSW, or keyed from the OOC print. */
-  source: "psw-fetch" | "keyed";
+  /**
+   * How the document reached us. Three distinct routes, not two:
+   *   `psw-fetch` — pulled electronically from the gateway (the norm);
+   *   `scanner`   — the OOC print imaged at the counter scanner and its
+   *                 values entered against that image;
+   *   `keyed`     — typed straight off the print, gateway and scanner both
+   *                 unavailable.
+   * `scanner` is a capture route, **not** a third OCR site — the values
+   * remain a keyed `FormValue`, see the SCOPE note in `common.ts`. The
+   * distinction is worth storing because the screens badge it, and a badge
+   * that says "scanner capture" over a keyed record is a lie about
+   * provenance.
+   */
+  source: "psw-fetch" | "scanner" | "keyed";
   fetchedAt: string | null;
+  /** When the print was scanned, where `source` is "scanner". */
+  scannedAt: string | null;
   /** When the operator keyed it, where `source` is "keyed". */
   keyedAt: string | null;
   issuedAt: string;
@@ -298,10 +328,21 @@ export interface OutOfCharge {
   verifiedBy: string | null;
 }
 
+/** The failing checks — what an operator has to go back to customs about. */
 export function oocMismatches(o: OutOfCharge): OocFieldCheck[] {
   return o.checks.filter((c) => !c.matches);
 }
 
+/**
+ * The whole OOC control in one predicate: someone signed the reconciliation
+ * off (`verifiedAt`) AND every field agrees with the SD.
+ *
+ * Exported deliberately, and imported rather than re-implemented: FC-06's
+ * clearance gate (`evaluateClearance` below), FC-07's release gate
+ * (finance.ts, which takes the result as a fact) and the fixture generator
+ * all read this. Two gates deriving "verified" two different ways is how
+ * the demo ended up releasing cargo on issuance alone.
+ */
 export function oocVerified(o: OutOfCharge): boolean {
   return o.verifiedAt !== null && oocMismatches(o).length === 0;
 }
@@ -353,6 +394,26 @@ export interface ClearanceCondition {
   detail: string;
 }
 
+/**
+ * FC-06's clearance gate — and, since the OOC amendment, the single place
+ * where "is the out-of-charge good?" is decided for the whole system.
+ *
+ * The `ooc-verified` condition below reads the real clearance record via
+ * `oocVerified()`: an OOC that was captured *and* reconciled field-by-field
+ * against the SD with zero mismatches. Issuance alone clears nothing — an
+ * `OutOfCharge` whose `verifiedAt` is still null, or that carries a single
+ * failing `OocFieldCheck`, fails this condition closed. That is why
+ * `SdStatus` now has an explicit `ooc-verified` state between `ooc-issued`
+ * and `released`.
+ *
+ * Both gates read this one source. FC-06's clearance gate is this function;
+ * FC-07's release gate (`evaluateReleaseGate` in finance.ts) is *handed*
+ * `oocVerified()` as a fact rather than re-deriving eligibility from the
+ * lifecycle stage — the stage-derived boolean is exactly what let an OOC
+ * that had only been issued release cargo. Change the rule in
+ * `oocVerified()` and both gates move together; re-derive it anywhere else
+ * and they drift apart again.
+ */
 export function evaluateClearance(
   c: CustomsClearance,
   opts: { isDetained: boolean },
@@ -411,11 +472,17 @@ export function evaluateClearance(
       key: "ooc-verified",
       label: "OOC issued and verified vs SD",
       pass: c.ooc != null && oocVerified(c.ooc),
+      // Three distinct not-yet states, because "not verified" and "verified
+      // and wrong" are different conversations with customs — and because
+      // reporting "0 field mismatch" on an OOC nobody has reconciled yet
+      // reads as a pass.
       detail: !c.ooc
         ? "No OOC yet"
         : oocVerified(c.ooc)
           ? `Verified against SD ${c.sdRef ?? ""}`.trim()
-          : `${oocMismatches(c.ooc).length} field mismatch vs SD`,
+          : oocMismatches(c.ooc).length === 0
+            ? "OOC captured but not yet verified against the SD"
+            : `${oocMismatches(c.ooc).length} field mismatch vs SD`,
     },
     {
       key: "not-detained",

@@ -22,6 +22,11 @@
  * Closure / Archive" is parked pending SAPS confirmation of the revenue
  * share (`INTERNATIONALCARGO`). The reference is shown; no amount is
  * invented behind it, and the gate says so rather than quietly passing.
+ *
+ * **Ported in from the retired `/export-cargo/manifest-handover`** (see
+ * PORTAL_AND_DEDUP_PLAN.md §2.1): the airline handover checklist and its
+ * acceptance signature. That screen's outbound message panel went to
+ * `/export/buildup`, which is where §E10 sits.
  */
 
 import { useMemo, useState } from "react";
@@ -30,6 +35,7 @@ import {
   ArrowUpRight,
   Archive,
   CheckCircle2,
+  ClipboardCheck,
   PlaneTakeoff,
   Scale,
   Undo2,
@@ -41,6 +47,7 @@ import { AuditStrip } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
   EXPORT_STAGE_LABEL,
+  EXPORT_STAGE_ORDER,
   evaluateClosure,
   evaluateUplift,
   formatDate,
@@ -50,12 +57,25 @@ import {
   rampGateFor,
 } from "@/lib/domain";
 
+/** Index of the stage at which custody has physically left the shed. */
+const HANDED_TO_RAMP = EXPORT_STAGE_ORDER.indexOf("E11-handed-to-ramp");
+
 export default function ExportUpliftPage() {
   const { scope, isHq } = useSite();
   const rows = useMemo(() => listExports(scope), [scope]);
 
   const [selected, setSelected] = useState<number | null>(null);
   const c = rows.find((x) => x.id === selected) ?? rows[0] ?? null;
+
+  /*
+   * The carrier's acceptance signature, keyed by consignment. It is held at
+   * screen level because the domain has nowhere to put it — see the block
+   * comment above the handover card. `signDraft` is what is being typed;
+   * `signedBy` is what was committed, and keeping them apart is what makes
+   * the checklist item flip on the signature rather than on a keystroke.
+   */
+  const [signDraft, setSignDraft] = useState<Record<number, string>>({});
+  const [signedBy, setSignedBy] = useState<Record<number, string>>({});
 
   const uplift = c ? evaluateUplift(c.uplift, c.booking) : null;
   const closure = c
@@ -256,6 +276,176 @@ export default function ExportUpliftPage() {
                   <p className="text-[12px] text-[#64748B] mt-1">{uplift.summary}</p>
                 </div>
               </div>
+
+              {/*
+               * Airline handover & acceptance signature — ported from
+               * /export-cargo/manifest-handover.
+               *
+               * The canonical ramp gate on /export/buildup has five
+               * conditions, and every one of them is something SAPS asserts
+               * about its own work: screened, sealed, custody unbroken,
+               * declaration cleared, build matching the load plan. None of
+               * them is the carrier saying "received".
+               *
+               * So the moment custody actually leaves the terminal — the one
+               * moment a cargo claim turns on — is the single point in the
+               * export chain with no record behind it. FC-11 has no field for
+               * the airline's acceptance, which is why the signature is
+               * captured here rather than read off the consignment: the gap
+               * is real, and papering over it with a derived boolean would
+               * hide it.
+               *
+               * The first three items are derived. Only the fourth is keyed.
+               */}
+              {(() => {
+                const built = c.pfm.length > 0 && c.pfm.every((l) => l.builtAt !== null);
+                const manifested = c.messagesSentAt !== null;
+                const atRamp = EXPORT_STAGE_ORDER.indexOf(c.stage) >= HANDED_TO_RAMP;
+                // Membership rather than truthiness: a signature is captured or
+                // it is not, and an empty string is not a signature.
+                const signed = c.id in signedBy;
+                const signature = signedBy[c.id] ?? "";
+                const draft = signDraft[c.id] ?? "";
+
+                const steps = [
+                  {
+                    code: "buildup",
+                    label: "Build-up complete",
+                    pass: built,
+                    detail: built
+                      ? `${c.pfm.length} ULD(s) built${c.pfm[0]?.builtBy ? ` by ${c.pfm[0].builtBy}` : ""}`
+                      : c.pfm.length === 0
+                        ? "Nothing built against the load plan"
+                        : "A ULD on the plan has not been built",
+                  },
+                  {
+                    code: "ffm",
+                    label: "Manifest sent (FFM)",
+                    pass: manifested,
+                    detail: manifested
+                      ? `Transmitted ${formatDateTime(c.messagesSentAt!)}`
+                      : "FFM / FWB / FHL not transmitted",
+                  },
+                  {
+                    code: "ramp",
+                    label: "ULDs handed to ramp",
+                    pass: atRamp,
+                    detail: atRamp
+                      ? `At or past E11 · ${EXPORT_STAGE_LABEL[c.stage]}`
+                      : `Still at ${EXPORT_STAGE_LABEL[c.stage]}`,
+                  },
+                  {
+                    code: "signed",
+                    label: "Airline acceptance signed",
+                    pass: signed,
+                    detail: signed
+                      ? `Signed for the carrier by ${signature}`
+                      : "No carrier signature captured — nothing records the transfer of custody",
+                  },
+                ];
+
+                const readyToSign = built && manifested && atRamp;
+                const complete = steps.every((s) => s.pass);
+
+                return (
+                  <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <ClipboardCheck size={15} className="text-[#64748B]" />
+                        <div>
+                          <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                            Airline handover — §E11
+                          </h3>
+                          <p className="text-[11px] text-[#94A3B8]">
+                            What the carrier signs for, as distinct from what SAPS certifies
+                          </p>
+                        </div>
+                      </div>
+                      <span
+                        className="h-[22px] px-2.5 rounded-full text-[10px] font-bold inline-flex items-center"
+                        style={
+                          complete
+                            ? { backgroundColor: "#DCFCE7", color: "#16A34A" }
+                            : { backgroundColor: "#FEF3C7", color: "#D97706" }
+                        }
+                      >
+                        {complete ? "HANDOVER COMPLETE" : "HANDOVER OPEN"}
+                      </span>
+                    </div>
+
+                    <div className="divide-y divide-[#F1F5F9]">
+                      {steps.map((s) => (
+                        <div key={s.code} className="px-5 py-3 flex items-start gap-2.5">
+                          {s.pass ? (
+                            <CheckCircle2
+                              size={15}
+                              className="text-[#16A34A] flex-shrink-0 mt-0.5"
+                            />
+                          ) : (
+                            <div className="w-[15px] h-[15px] rounded-full border-2 border-[#CBD5E1] flex-shrink-0 mt-0.5" />
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-medium text-[#0F172A]">{s.label}</p>
+                            <p
+                              className="text-[11px] mt-0.5"
+                              style={{ color: s.pass ? "#64748B" : "#92400E" }}
+                            >
+                              {s.detail}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="p-5 flex flex-col gap-3 border-t border-[#F1F5F9]">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                          Acceptance signature — carrier representative
+                        </label>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <input
+                            value={signed ? signature : draft}
+                            disabled={signed}
+                            onChange={(e) =>
+                              setSignDraft((prev) => ({ ...prev, [c.id]: e.target.value }))
+                            }
+                            placeholder="Name and staff number of the ramp officer signing"
+                            className="h-9 px-3 rounded-lg border border-[#E2E8F0] bg-white text-[13px] text-[#0F172A] outline-none focus:border-[#1B4F8B] disabled:bg-[#F8FAFC] disabled:text-[#64748B] flex-1 min-w-[240px]"
+                          />
+                          <button
+                            onClick={() =>
+                              setSignedBy((prev) => ({ ...prev, [c.id]: draft.trim() }))
+                            }
+                            disabled={!readyToSign || draft.trim() === "" || signed}
+                            className="h-9 px-4 rounded-lg text-[13px] font-bold text-white transition-colors cursor-pointer disabled:cursor-not-allowed"
+                            style={{
+                              backgroundColor:
+                                readyToSign && draft.trim() !== "" && !signed
+                                  ? "#16A34A"
+                                  : "#CBD5E1",
+                            }}
+                          >
+                            Mark handover complete
+                          </button>
+                        </div>
+                      </div>
+
+                      {!readyToSign && (
+                        <p className="text-[11px] text-[#92400E]">
+                          The carrier cannot sign for what has not been handed over. The three
+                          derived items above have to stand first.
+                        </p>
+                      )}
+
+                      <p className="text-[11px] text-[#94A3B8] leading-relaxed">
+                        Signing closes §E11. It does not close the file — the payload decision
+                        below can still bring this cargo back off the aircraft, and an offload
+                        returns it to E08 warehousing rather than to the counter.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* The payload numbers */}
               {c.uplift && (
