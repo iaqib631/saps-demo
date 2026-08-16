@@ -503,7 +503,7 @@ export const FLOWS: FlowDef[] = [
     docNo: "SAPS-ACMS-FC-01",
     rev: "Rev 2.0",
     amendment:
-      "Step 05 becomes OCR-assisted intake (05a–05f): scan → auto-extract line items with per-item confidence → operator accepts/corrects → capture declared (OCR) vs physical (received) → commit. A variance ≥ tolerance raises a CDR directly (FC-04). A4: step 22 splits — 22b the terminal issues the DO after payment clears and all five release conditions pass as an AND, and 22a is where the CHA collects the issued DO. The “requested after the NOA” reading of 22a is retired: its screen is /cha/do-collection, whose queue opens at “DO Ready” and runs DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected. There is no requested state on it, so 22a cannot precede the issuance it collects, and it now sits below 22b. A5: the duplicated orphan “08 Discrepancy Found?” / “SB3” pair with its self-referencing Yes edge is deleted; one diamond survives. A6: the §14 → §08 back-edge is deleted — a weighing or condition discrepancy at §14 raises a CDR at §14a instead of rewinding past indexation, tagging, split and segregation.",
+      "Step 05 becomes OCR-assisted intake (05a–05f): scan → auto-extract line items with per-item confidence → operator accepts/corrects → capture declared (OCR) vs physical (received) → commit. A variance ≥ tolerance raises a CDR directly (FC-04). A4: step 22 splits — §22 the terminal issues the DO after payment clears and all five release conditions pass as an AND, and §22a is where the CHA collects the issued DO. The “requested after the NOA” reading of the second half is retired: its screen is /cha/do-collection, whose queue opens at “DO Ready” and runs DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected. There is no requested state on it, so it cannot precede the issuance it collects, and it sits below the issuance. Numbering pass: the two halves were lettered 22a (request) and 22b (issue) while the request was drawn first, and the letters were never touched when the steps swapped — the walkthrough printed 21a, 22b, 22a, 23 and descended at 22b → 22a. The ORDER is right and does not move; the letters were wrong. The issue half takes the bare parent number §22, because old step 22 was one node and issuance is the FC-01 spine act the terminal performs, and the CHA's collection keeps §22a as the sub-step subordinate to it — the same relation §14a has to §14 and §21a to §21, and the rule FC-02 states for its own lettered steps. FC-01 now ascends 21a → 22 → 22a → 23 and the ref 22b is retired. A5: the duplicated orphan “08 Discrepancy Found?” / “SB3” pair with its self-referencing Yes edge is deleted; one diamond survives. A6: the §14 → §08 back-edge is deleted — a weighing or condition discrepancy at §14 raises a CDR at §14a instead of rewinding past indexation, tagging, split and segregation.",
     steps: [
       { ref: "01–04", label: "Handover, pouch opening", href: "/import/flights", module: "M01" },
       { ref: "05", label: "Document verification (OCR intake 05a–05f)", href: "/import/ocr-intake", module: "M02" },
@@ -520,15 +520,23 @@ export const FLOWS: FlowDef[] = [
       { ref: "19", label: "Customs clearance tracking", href: "/customs/channels", module: "M09" },
       { ref: "20–21", label: "Charges calculation, invoice", href: "/billing/calculator", module: "M10" },
       { ref: "21a", label: "Godown rent voucher issued", href: "/billing/godown-rent", module: "M11", note: "A10 — this is where FC-07 ends. Everything below is FC-01/M12 and beyond." },
-      { ref: "22b", label: "DO issued by the terminal — after payment + the five-condition release gate", href: "/billing/delivery-order", module: "M12", note: "A4/A11 — the issue half of old step 22. Gated on the AND of OOC verified against the SD · AWB authority verified · DO charges paid · cargo not on hold · special clearance completed. evaluateReleaseGate() in lib/domain/finance.ts." },
+      { ref: "22", label: "DO issued by the terminal — after payment + the five-condition release gate", href: "/billing/delivery-order", module: "M12", note: "A4/A11 — the issue half of old step 22, and the half that keeps the bare number: it is the spine act on FC-01, and §22a below is the sub-step subordinate to it. Cited as 22b until the numbering pass; that ref is retired. Gated on the AND of OOC verified against the SD · AWB authority verified · DO charges paid · cargo not on hold · special clearance completed. evaluateReleaseGate() in lib/domain/finance.ts." },
       /*
-       * §22a moved below §22b. It was drawn above §19 customs as the "request"
-       * half of the split, but its screen is /cha/do-collection, a collection
-       * queue whose first state is "DO Ready" — an already-issued DO awaiting a
-       * driver. Collection cannot precede issuance, and FC-02 §33 and FC-08 §01
-       * both put the same act after the DO exists.
+       * §22a moved below the issuance. It was drawn above §19 customs as the
+       * "request" half of the split, but its screen is /cha/do-collection, a
+       * collection queue whose first state is "DO Ready" — an already-issued DO
+       * awaiting a driver. Collection cannot precede issuance, and FC-02 §33 and
+       * FC-08 §01 both put the same act after the DO exists.
+       *
+       * The move happened without renumbering, which is what made the badges
+       * descend: the pair was lettered 22a / 22b when the request half was
+       * first, and the letters stayed put when the steps swapped. The letters
+       * are what got fixed, not the order — the issuance above is now the
+       * numbered parent §22 and this node keeps 22a as its sub-step, so the
+       * suffix once again means "subordinate to the numbered step above me",
+       * as it does at §14a and §21a. Nothing here moved.
        */
-      { ref: "22a", label: "DO collected by the CHA / consignee — driver and vehicle assigned against the issued DO", href: "/cha/do-collection", module: "M12", note: "A4 — the collection half of old step 22, and it follows §22b issuance. The queue runs DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected; nothing on it raises a request. Collecting does not release cargo either — release is the gate-out re-check at §24." },
+      { ref: "22a", label: "DO collected by the CHA / consignee — driver and vehicle assigned against the issued DO", href: "/cha/do-collection", module: "M12", note: "A4 — the collection half of old step 22, and it follows the §22 issuance. The queue runs DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected; nothing on it raises a request. Collecting does not release cargo either — release is the gate-out re-check at §24." },
       { ref: "23", label: "Gate pass", href: "/dispatch/gate-pass", module: "M13" },
       { ref: "24", label: "Physical delivery / dispatch", href: "/dispatch/gate-out", module: "M13" },
       { ref: "25–26", label: "POD capture, DLV message", href: "/dispatch/closure", module: "M14" },
@@ -845,11 +853,11 @@ export const FLOWS: FlowDef[] = [
     id: "FC-07",
     title: "Charges, Invoice, Waiver & Godown Rent Voucher",
     subtitle:
-      "Charge calculation, tariff application, adjustments, the five-condition gate and the godown-rent voucher — the DO itself is issued at FC-01 §22b (M12)",
+      "Charge calculation, tariff application, adjustments, the five-condition gate and the godown-rent voucher — the DO itself is issued at FC-01 §22 (M12)",
     docNo: "SAPS-ACMS-FC-07-02",
     rev: "Rev 2.0",
     amendment:
-      "Charges auto-computed from a versioned Tariff Master. Payment is cash-less via gateway, auto-reconciled. Waiver runs role-based multi-level approval + audit → credit note. A3: the storage clock starts at INTAKE, not at flight arrival and not in the finance lane; the free/grace period runs from the clock start; the chargeable period is dwell − free. The steps are ordered that way — §01 arrival, §02 clock start, §03 free period, §03a chargeable period — because the old combined node stated the free period before the clock had started. A11: the five release conditions are an AND gate, not the fan-out the board draws — all five (where applicable) must pass. A10: this flow ends at the godown-rent voucher; DO issuance is FC-01 §22b / M12.",
+      "Charges auto-computed from a versioned Tariff Master. Payment is cash-less via gateway, auto-reconciled. Waiver runs role-based multi-level approval + audit → credit note. A3: the storage clock starts at INTAKE, not at flight arrival and not in the finance lane; the free/grace period runs from the clock start; the chargeable period is dwell − free. The steps are ordered that way — §01 arrival, §02 clock start, §03 free period, §03a chargeable period — because the old combined node stated the free period before the clock had started. A11: the five release conditions are an AND gate, not the fan-out the board draws — all five (where applicable) must pass. A10: this flow ends at the godown-rent voucher; DO issuance is FC-01 §22 / M12 (cited as §22b before FC-01's numbering pass).",
     steps: [
       { ref: "01", label: "Flight arrival time recorded — provenance only, never priced", href: "/awb/1", module: "M04", note: "A3 — the gap between the aircraft landing and the cargo being accepted is the handler's, and is never billed to the consignee. Code field: ChargeCalculation.arrivalAt." },
       { ref: "02", label: "Storage clock starts at cargo intake", href: "/awb/1?tab=charges", module: "M10", note: "A3 — clock first. The anchor is the AWB's intakeAt, surfaced as ChargeCalculation.clockStartedAt; FC-02 §24 says the same thing, so the two flows now agree." },
@@ -878,7 +886,7 @@ export const FLOWS: FlowDef[] = [
       { ref: "13a", label: "Gateway payment reconciled — webhook matched to the invoice, settlement, failure reason, refund status", href: "/finance-manager/payment-gateway-reconciliation", module: "M11", note: "Six providers — HBL, Meezan, NIFT, Easypaisa, JazzCash, 1LINK — with the verbatim webhook payload and a per-transaction audit trail. The gateway itself is a named FC-12 node at §11-P." },
       { ref: "14", label: "Release gate — ALL five conditions must pass (AND)", href: "/awb/3?tab=customs", module: "M11", decision: true, note: "A11 — AND, not the fan-out the board draws: OOC verified against the SD · AWB authority verified · DO charges paid · cargo not on hold · special clearance completed. Special clearance is conditional on cargo class (BLK-10) and shows N/A rather than blocking. evaluateReleaseGate() in lib/domain/finance.ts — canRelease is blockedBy.length === 0." },
       { ref: "15", label: "G.Rent voucher issued — end of FC-07", href: "/billing/godown-rent", module: "M11", note: "A10 — the five conditions gate THIS, not the DO. FC-07 ends here." },
-      { ref: "→", label: "Handoff: DO issued by the terminal — FC-01 §22b (M12)", href: "/billing/delivery-order", module: "M12", note: "A10 — the DO is not an FC-07 node. It is issued after this voucher, on the FC-01 spine." },
+      { ref: "→", label: "Handoff: DO issued by the terminal — FC-01 §22 (M12)", href: "/billing/delivery-order", module: "M12", note: "A10 — the DO is not an FC-07 node. It is issued after this voucher, on the FC-01 spine." },
     ],
   },
   {
