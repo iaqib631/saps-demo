@@ -51,7 +51,9 @@ export default function AppShell({ children }: AppShellProps) {
    * by definition, not inside any portal — it is the shell.
    */
   const portalName = useMemo(
-    () => portalForPath(pathname)?.label ?? "Platform",
+    // Only Home is portal-less now, so the fallback is the product rather than
+    // a portal name — "Platform" was one of the fourteen and no longer exists.
+    () => portalForPath(pathname)?.label ?? "AirVault",
     [pathname],
   );
 

@@ -40,20 +40,20 @@ import {
  * The client requirement is two things at once, and they pull in opposite
  * directions:
  *
- *   (a) every portal is SEPARATE and self-contained — admin, lifter, customer
- *       and broker each own their own screens, none congested into another —
+ *   (a) every portal is SEPARATE and self-contained — warehouse, consignee and
+ *       superadmin each own their own screens, none congested into another —
  *       because each portal is eventually lifted into its own repository; and
- *   (b) all fourteen are visible in ONE sidebar, because until that split
- *       happens the client needs to see the whole picture in a single rail.
+ *   (b) all three are visible in ONE sidebar, because until that split happens
+ *       the client needs to see the whole picture in a single rail.
  *
  * The resolution is that a portal is a first-class thing in the data model
  * (`PORTALS`), carrying its audience and its owning flow, and the rail is a
  * flat, flow-ordered list of blocks (`RAIL`) where each block declares which
  * portal owns it. Headings are DERIVED by grouping consecutive blocks with the
  * same portal, which means portal membership and rail position are authored
- * exactly once each and cannot drift apart. It also means a portal that has to
- * be interrupted for flow reasons — see Terminal Operations below — renders as
- * two headed runs automatically rather than needing a second hand-kept list.
+ * exactly once each and cannot drift apart. With three portals the rail runs
+ * as three unbroken headed runs; the grouping is kept derived anyway, so that
+ * re-ordering a block can never silently orphan it from its heading.
  *
  * The audience tag on every heading is not decoration: it is the repo-split
  * boundary written into the nav, so that when the portals are extracted the
@@ -65,30 +65,9 @@ import {
  * `internal-ops` screen and a `customer` screen must never end up in the same
  * bundle once the portals are extracted, however similar their content looks.
  */
-export type Audience =
-  | "internal-ops"
-  | "admin"
-  | "customer"
-  | "agent"
-  | "partner"
-  | "oversight"
-  | "platform";
+export type Audience = "internal-ops" | "customer" | "admin";
 
-export type PortalId =
-  | "platform"
-  | "terminal-ops"
-  | "finance"
-  | "customer"
-  | "cha"
-  | "forwarding-agent"
-  | "gate-yard"
-  | "warehouse"
-  | "equipment"
-  | "uld"
-  | "planning"
-  | "supervision"
-  | "administration"
-  | "audit";
+export type PortalId = "warehouse" | "consignee" | "superadmin";
 
 export interface PortalMeta {
   /** Heading shown in the rail. */
@@ -104,21 +83,37 @@ export interface PortalMeta {
   flow: string;
 }
 
+/**
+ * Three portals, in the order the client fixed:
+ *
+ *   1. Warehouse   — cargo handling and airport services. Everything SAPS staff
+ *                    do to a consignment, from forecast to file closure.
+ *   2. Consignee   — the external parties. The consignee is the named one, and
+ *                    the CHA and the freight forwarder sit with it because they
+ *                    are the same side of the counter: people SAPS serves, not
+ *                    people SAPS employs. Putting them in Warehouse would put a
+ *                    broker's screens in the terminal's repository.
+ *   3. Superadmin  — platform administration, oversight and the shared shell.
+ *
+ * Each is self-contained enough to be lifted into its own repository, which is
+ * what `audience` records: it is the split boundary, written into the nav.
+ */
 export const PORTALS: Record<PortalId, PortalMeta> = {
-  platform: { label: "Platform", audience: "platform", flow: "Shared shell — stays behind on the split" },
-  "terminal-ops": { label: "Terminal Operations", audience: "internal-ops", flow: "FC-01 · FC-02 · FC-03 · FC-04 · FC-06 · FC-09 · FC-10 · FC-11" },
-  finance: { label: "Finance", audience: "internal-ops", flow: "FC-07 · FC-17" },
-  customer: { label: "Customer Portal", audience: "customer", flow: "FC-02 consignee lane" },
-  cha: { label: "CHA Portal", audience: "agent", flow: "FC-06 · FC-07 §13 · FC-08 §01 · FC-10" },
-  "forwarding-agent": { label: "Forwarding Agent Portal", audience: "partner", flow: "FC-01 §22a · FC-07 §13 · FC-08 §01–04" },
-  "gate-yard": { label: "Gate & Yard", audience: "internal-ops", flow: "FC-08 §02–04, §11–13" },
-  warehouse: { label: "Warehouse", audience: "internal-ops", flow: "FC-03 · FC-08 §07–10" },
-  equipment: { label: "Equipment & Lifter Fleet", audience: "internal-ops", flow: "FC-15" },
-  uld: { label: "ULD Management", audience: "internal-ops", flow: "FC-16" },
-  planning: { label: "Planning & Capacity", audience: "internal-ops", flow: "FC-13" },
-  supervision: { label: "Operations Supervision", audience: "internal-ops", flow: "FC-14" },
-  administration: { label: "Administration", audience: "admin", flow: "FC-12 platform" },
-  audit: { label: "Audit & Oversight", audience: "oversight", flow: "FC-12 M19 / M20" },
+  warehouse: {
+    label: "Warehouse Portal",
+    audience: "internal-ops",
+    flow: "FC-01 · FC-02 · FC-03 · FC-04 · FC-05 · FC-06 · FC-07 · FC-08 · FC-09 · FC-10 · FC-11 · FC-13 · FC-14 · FC-15 · FC-16 · FC-17",
+  },
+  consignee: {
+    label: "Consignee Portal",
+    audience: "customer",
+    flow: "FC-02 consignee lane · FC-06 · FC-07 §13 · FC-08 §01 · FC-10",
+  },
+  superadmin: {
+    label: "Superadmin Portal",
+    audience: "admin",
+    flow: "FC-12 · M19 / M20 · platform services",
+  },
 };
 
 interface NavLeaf {
@@ -243,73 +238,42 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
  *   Administration      the write side of configuration and RBAC.
  *   Audit & Oversight   read-only, and last: nothing flows out of it.
  * ===========================================================================*/
+
+/**
+ * The landing page sits ABOVE the three portals rather than inside one.
+ * It belongs to no portal — it is the page you arrive on before choosing
+ * one — and giving it a portal id would render a fourth heading, which is
+ * exactly the thing this rail no longer has.
+ */
+const HOME: NavLeaf & { icon: React.ComponentType<{ size?: number; strokeWidth?: number }> } = { label: "Home", icon: LayoutDashboard, href: "/" };
+
 const RAIL: NavBlock[] = [
-  /* ── Platform ─────────────────────────────────────────────────────────────
-   * The only routes that stay in the host repo when the other thirteen portals
-   * are extracted. Placed first because it is the shell, and because the AWB
-   * hub — the object every other portal drills into — belongs at the top where
-   * every reference to it reads as an upward drill-in rather than a next step.
-   * -------------------------------------------------------------------------- */
-  { portal: "platform", label: "Home", icon: LayoutDashboard, href: "/" },
   {
     // Had NO sidebar entry at all before this rewrite, despite being the declared
     // target of twelve flow steps across FC-02, FC-07, FC-08 and FC-09. It was
     // reachable only by accident, through in-page deep links. `/awb/1` is the
     // demo's first fixture AWB; `matchPrefix` keeps the entry lit for any id.
-    portal: "platform",
+    portal: "warehouse",
     label: "AWB Hub — M03",
     icon: Package,
     href: "/awb/1",
     matchPrefix: "/awb",
   },
   {
-    portal: "platform",
-    label: "Architecture & Flows",
-    icon: Network,
-    href: "/modules",
+    portal: "warehouse",
+    label: "Planning & Capacity",
+    icon: Calendar,
+    href: "/planner",
     subItems: [
-      { label: "Module Map", href: "/modules" },
-      { label: "Flow Walkthroughs", href: "/flows/FC-01", matchPrefix: "/flows" },
+      { label: "Planning Home", href: "/planner" }, //                                §00
+      { label: "Demand Forecast", href: "/planner/demand-forecast" }, //              §01 / M01
+      { label: "Capacity Dashboard", href: "/planner/capacity-dashboard" }, //        §02
+      { label: "Slot Planner", href: "/planner/slot-planner" }, //                    §03
+      { label: "Resource Roster", href: "/planner/resource-roster" }, //              §04
     ],
   },
   {
-    portal: "platform",
-    label: "Integrations",
-    icon: Plug,
-    href: "/integration-status",
-    subItems: [
-      { label: "Integration Status", href: "/integration-status" },
-      { label: "RFID Integration", href: "/rfid-integration" },
-      // Build-QA surface rather than a client-facing screen. It is listed rather
-      // than hidden because the audit rule for this rail is that every route under
-      // app/ appears in exactly one portal — an unlisted route is an unowned route.
-      { label: "QA Checklist (internal)", href: "/qa-checklist" },
-    ],
-  },
-  {
-    // These four render outside the app shell (LayoutClient skips AppShell for
-    // them), so following one of these links leaves the rail behind. They are
-    // listed anyway because they are real, owned routes and because the demo is
-    // frequently walked through each auth state on purpose.
-    portal: "platform",
-    label: "Access & Session",
-    icon: KeyRound,
-    href: "/login",
-    subItems: [
-      { label: "Sign In", href: "/login" },
-      { label: "Session Expired", href: "/auth/session-expired" },
-      { label: "Permission Denied", href: "/auth/permission-denied" },
-      { label: "No Access", href: "/auth/no-access" },
-    ],
-  },
-
-  /* ── Terminal Operations · run 1 ──────────────────────────────────────────
-   * The FC-01 import spine. These are the routes wired to the typed domain
-   * model in lib/domain, which is what makes them one portal: the import
-   * boundary is the natural repo split line.
-   * -------------------------------------------------------------------------- */
-  {
-    portal: "terminal-ops",
+    portal: "warehouse",
     label: "Import Documentation",
     icon: FileScan,
     href: "/import/flights",
@@ -328,7 +292,7 @@ const RAIL: NavBlock[] = [
     ],
   },
   {
-    portal: "terminal-ops",
+    portal: "warehouse",
     label: "Storage & Allocation",
     icon: Boxes,
     href: "/storage/master",
@@ -341,7 +305,35 @@ const RAIL: NavBlock[] = [
     ],
   },
   {
-    portal: "terminal-ops",
+    portal: "warehouse",
+    label: "Warehouse Floor",
+    icon: Warehouse,
+    href: "/warehouse-manager",
+    subItems: [
+      { label: "Warehouse Dashboard", href: "/warehouse-manager" }, //                FC-03 §00
+      { label: "AWB Register", href: "/warehouse-manager/awb-detail" }, //             FC-02 §10 / M03
+      { label: "Putaway", href: "/warehouse-manager/putaway" }, //                     FC-03 §03
+      { label: "Storage Map", href: "/warehouse-manager/storage-map" }, //             FC-03 §04 / §A
+      { label: "Cold Chain Console", href: "/warehouse-manager/cold-chain" }, //       FC-03 §B
+      { label: "Picking", href: "/warehouse-manager/picking" }, //                     FC-08 §07–10
+    ],
+  },
+  {
+    portal: "warehouse",
+    label: "Lifter Fleet",
+    icon: Forklift,
+    href: "/lifter-operator",
+    subItems: [
+      { label: "Lifter Home", href: "/lifter-operator" }, //                          §00
+      { label: "My Tasks", href: "/lifter-operator/tasks" }, //                       §01
+      { label: "Task Detail", href: "/lifter-operator/task-detail" }, //              §02
+      { label: "RFID Scan", href: "/lifter-operator/rfid-scan" }, //                  §03 / FC-03 §05
+      { label: "Movement Log", href: "/lifter-operator/movement-log" }, //            §04
+      { label: "Lifter Status", href: "/lifter-operator/lifter-status" }, //          §05
+    ],
+  },
+  {
+    portal: "warehouse",
     label: "Messaging & Alerts",
     icon: Send,
     href: "/messaging/iata",
@@ -356,7 +348,22 @@ const RAIL: NavBlock[] = [
     ],
   },
   {
-    portal: "terminal-ops",
+    portal: "warehouse",
+    label: "ULD Messaging",
+    icon: Container,
+    href: "/uld-message-builder",
+    subItems: [
+      { label: "ULD Dashboard", href: "/uld-message-builder" }, //                    §00
+      { label: "Import ULDs", href: "/uld-message-builder/import-ulds" }, //          §01
+      { label: "UCM — ULD Control Message", href: "/uld-message-builder/ucm" }, //     §02
+      { label: "SCM — Stock Check Message", href: "/uld-message-builder/scm" }, //     §03
+      { label: "LUC Message Builder", href: "/uld-message-builder/luc" }, //          §04
+      { label: "Message Log", href: "/uld-message-builder/message-log" }, //          §05
+      { label: "Search ULD Messages", href: "/uld-message-builder/search" }, //       §06
+    ],
+  },
+  {
+    portal: "warehouse",
     label: "Customs Clearance",
     icon: Landmark,
     href: "/customs",
@@ -374,20 +381,8 @@ const RAIL: NavBlock[] = [
       { label: "Detained Cargo", href: "/customs/detained" }, //                     §05-R1
     ],
   },
-
-  /* ── Finance ──────────────────────────────────────────────────────────────
-   * FC-07 in full, plus the FC-17 ERP hand-off that closes it. Placed here, not
-   * further down, because §20–22 of the import spine — charges, invoice,
-   * delivery order — run between customs clearance and the gate pass. The gate
-   * pass is issued against a DO, so the DO has to be established above it.
-   *
-   * Internal order is forced by the actual in-page links rather than by FC-07's
-   * step numbers: invoice and calculator both link onward to godown-rent, and
-   * both godown-rent and invoice link onward to delivery-order, so this is the
-   * only arrangement in which no onward CTA points up.
-   * -------------------------------------------------------------------------- */
   {
-    portal: "finance",
+    portal: "warehouse",
     label: "Tariff & Charges",
     icon: Coins,
     href: "/finance-manager",
@@ -402,7 +397,7 @@ const RAIL: NavBlock[] = [
     ],
   },
   {
-    portal: "finance",
+    portal: "warehouse",
     label: "Invoice, Payment & Release",
     icon: Wallet,
     href: "/billing/invoice",
@@ -417,90 +412,8 @@ const RAIL: NavBlock[] = [
       { label: "ERP Bridge Mapping", href: "/finance-manager/erp-bridge-mapping" }, //   FC-17 §01
     ],
   },
-
-  /* ── Customer Portal ──────────────────────────────────────────────────────
-   * The receiver's self-service journey, in the order the receiver experiences
-   * it: notice received → charges paid → DO downloaded → pickup booked → POD
-   * signed. Nothing under app/consignee imports lib/domain, which is what makes
-   * this portal genuinely liftable into a customer-facing repo of its own.
-   * -------------------------------------------------------------------------- */
   {
-    portal: "customer",
-    label: "Customer Self-Service",
-    icon: Receipt,
-    href: "/consignee/dashboard",
-    subItems: [
-      { label: "Dashboard", href: "/consignee/dashboard" }, //                       FC-02 §30
-      { label: "My Shipments", href: "/consignee/my-shipments" }, //                 FC-02 §30
-      { label: "Notice of Arrival", href: "/consignee/notice-of-arrival" }, //        FC-06 §01
-      { label: "Pay & Download DO", href: "/consignee/pay-do" }, //                   FC-02 §32–33
-      { label: "Schedule Pickup", href: "/consignee/schedule-pickup" }, //            FC-08 §01
-      { label: "POD History", href: "/consignee/pod-history" }, //                    FC-08 §14
-    ],
-  },
-
-  /* ── CHA Portal ───────────────────────────────────────────────────────────
-   * The customs broker's own surface. It is not a duplicate of the terminal's
-   * customs block: `/customs/filing` is the terminal READING a declaration,
-   * `/cha/gd-filing-workbench` is the broker FILING it. Placed above Dispatch
-   * because `/cha/do-collection` is FC-08 §01 — the literal first step of the
-   * gate-pass flow, which the old rail buried ~150 lines below the flow it opens.
-   * -------------------------------------------------------------------------- */
-  {
-    portal: "cha",
-    label: "Customs Broker Desk",
-    icon: UserCheck,
-    href: "/cha",
-    subItems: [
-      { label: "Dashboard", href: "/cha" }, //                                       FC-06 §02
-      { label: "GD Filing Workbench", href: "/cha/gd-filing-workbench" }, //          FC-06 §03
-      { label: "Channel-Specific Workflow", href: "/cha/channel-specific-workflow" }, // §04–05
-      { label: "OOC Tracking", href: "/cha/ooc-tracking" }, //                        §08
-      { label: "Payments", href: "/cha/payments" }, //                                FC-07 §13
-      { label: "DO Collection", href: "/cha/do-collection" }, //                      FC-08 §01
-      { label: "Re-export / Long-Stay Console", href: "/cha/re-export-long-stay" }, // FC-10
-    ],
-  },
-
-  /* ── Forwarding Agent Portal ──────────────────────────────────────────────
-   * The freight forwarder, ordered as their booking-to-settlement arc. Not
-   * FC-18 — that is Airmail. This is an actor portal over FC-01/FC-07/FC-08
-   * touchpoints, which is why it needs no flow of its own. It sits immediately
-   * above Gate & Yard because the driver and vehicle registered here are the
-   * ones the gate verifies next.
-   * -------------------------------------------------------------------------- */
-  {
-    portal: "forwarding-agent",
-    label: "Freight Forwarder Desk",
-    icon: Ship,
-    href: "/forwarding-agent",
-    subItems: [
-      { label: "Dashboard", href: "/forwarding-agent" },
-      { label: "AWB Entry — Digital", href: "/forwarding-agent/awb-entry-digital" }, //   FC-01 §22a
-      { label: "Pickup Scheduling", href: "/forwarding-agent/pickup-scheduling" }, //     FC-08 §01
-      { label: "Driver Register", href: "/forwarding-agent/driver-register" }, //         FC-08 §03
-      { label: "Vehicle Register", href: "/forwarding-agent/vehicle-register" }, //       FC-08 §12
-      { label: "Dispatch Documents", href: "/forwarding-agent/dispatch-documents" },
-      { label: "Payments", href: "/forwarding-agent/payments" }, //                       FC-07 §13
-      { label: "Notifications & History", href: "/forwarding-agent/notifications-history" },
-    ],
-  },
-
-  /* ── Gate & Yard ──────────────────────────────────────────────────────────
-   * Placed here, between Terminal Operations' customs block and its dispatch
-   * block, for one specific reason: FC-08 verifies receiver identity (§03) and
-   * the authority letter (§04) BEFORE it generates the gate pass (§06). The old
-   * rail had the gate pass in Operational Flow and both checks far below in Role
-   * Views, so walking the nav top-to-bottom issued the pass before showing the
-   * two checks that gate it.
-   *
-   * Vehicle exit (§12–13) trails the gate pass in flow terms but stays with its
-   * portal: for a six-screen portal, self-containment is worth more than the one
-   * intra-portal step that reads out of order, and splitting it would defeat the
-   * whole point of the exercise.
-   * -------------------------------------------------------------------------- */
-  {
-    portal: "gate-yard",
+    portal: "warehouse",
     label: "Gate & Yard",
     icon: Truck,
     href: "/gate-entry",
@@ -513,15 +426,8 @@ const RAIL: NavBlock[] = [
       { label: "Vehicle Exit", href: "/gate-entry/vehicle-exit" }, //                  §12–13
     ],
   },
-
-  /* ── Terminal Operations · run 2 ──────────────────────────────────────────
-   * The same portal resumed. This is the one place the rail interrupts a portal,
-   * and it is deliberate: the alternative is issuing a gate pass above the checks
-   * that authorise it. The heading renders as a continuation so the reader can
-   * see that these blocks belong to the portal above, not to Gate & Yard.
-   * -------------------------------------------------------------------------- */
   {
-    portal: "terminal-ops",
+    portal: "warehouse",
     label: "Dispatch & Closure",
     icon: PackageCheck,
     href: "/dispatch/gate-pass",
@@ -532,7 +438,7 @@ const RAIL: NavBlock[] = [
     ],
   },
   {
-    portal: "terminal-ops",
+    portal: "warehouse",
     label: "Exceptions & CDR",
     icon: TriangleAlert,
     href: "/exceptions/cdr",
@@ -550,7 +456,7 @@ const RAIL: NavBlock[] = [
     ],
   },
   {
-    portal: "terminal-ops",
+    portal: "warehouse",
     label: "Transhipment",
     icon: Repeat,
     href: "/transhipment/register",
@@ -560,7 +466,7 @@ const RAIL: NavBlock[] = [
     ],
   },
   {
-    portal: "terminal-ops",
+    portal: "warehouse",
     label: "Export (FC-11)",
     icon: PlaneTakeoff,
     href: "/export/booking",
@@ -573,103 +479,8 @@ const RAIL: NavBlock[] = [
       { label: "Uplift & Closure", href: "/export/uplift" }, //                       §15
     ],
   },
-
-  /* ── Warehouse ────────────────────────────────────────────────────────────
-   * The floor's own portal, below Terminal Operations because putaway and
-   * picking are the PHYSICAL EXECUTION of the allocation and the gate pass
-   * recorded above. awb-detail is kept as the warehouse-facing AWB register —
-   * it is the only screen here wired to lib/domain, and it links up into the
-   * shared AWB hub rather than restating it.
-   * -------------------------------------------------------------------------- */
   {
     portal: "warehouse",
-    label: "Warehouse Floor",
-    icon: Warehouse,
-    href: "/warehouse-manager",
-    subItems: [
-      { label: "Warehouse Dashboard", href: "/warehouse-manager" }, //                FC-03 §00
-      { label: "AWB Register", href: "/warehouse-manager/awb-detail" }, //             FC-02 §10 / M03
-      { label: "Putaway", href: "/warehouse-manager/putaway" }, //                     FC-03 §03
-      { label: "Storage Map", href: "/warehouse-manager/storage-map" }, //             FC-03 §04 / §A
-      { label: "Cold Chain Console", href: "/warehouse-manager/cold-chain" }, //       FC-03 §B
-      { label: "Picking", href: "/warehouse-manager/picking" }, //                     FC-08 §07–10
-    ],
-  },
-
-  /* ── Equipment & Lifter Fleet ─────────────────────────────────────────────
-   * The lifter operator's handheld-shaped portal, FC-15. The portal root is a
-   * redirect to /lifter-operator/tasks and was omitted from the old rail
-   * entirely, leaving the portal with no listed entry point. Ordered on the
-   * operator's real sequence — the RFID scan links back to both tasks and task
-   * detail, so both sit above it.
-   * -------------------------------------------------------------------------- */
-  {
-    portal: "equipment",
-    label: "Lifter Fleet",
-    icon: Forklift,
-    href: "/lifter-operator",
-    subItems: [
-      { label: "Lifter Home", href: "/lifter-operator" }, //                          §00
-      { label: "My Tasks", href: "/lifter-operator/tasks" }, //                       §01
-      { label: "Task Detail", href: "/lifter-operator/task-detail" }, //              §02
-      { label: "RFID Scan", href: "/lifter-operator/rfid-scan" }, //                  §03 / FC-03 §05
-      { label: "Movement Log", href: "/lifter-operator/movement-log" }, //            §04
-      { label: "Lifter Status", href: "/lifter-operator/lifter-status" }, //          §05
-    ],
-  },
-
-  /* ── ULD Management ───────────────────────────────────────────────────────
-   * FC-16, promoted out of the old "System & Roadmap" bucket into a first-class
-   * portal. It is the other half of M07: the IATA console links down into it,
-   * and the old rail had the two furthest-apart sections of the nav holding one
-   * module. The six auth screens that used to live under this namespace were
-   * never ULD screens and are now in Platform, where they survive the split.
-   * -------------------------------------------------------------------------- */
-  {
-    portal: "uld",
-    label: "ULD Messaging",
-    icon: Container,
-    href: "/uld-message-builder",
-    subItems: [
-      { label: "ULD Dashboard", href: "/uld-message-builder" }, //                    §00
-      { label: "Import ULDs", href: "/uld-message-builder/import-ulds" }, //          §01
-      { label: "UCM — ULD Control Message", href: "/uld-message-builder/ucm" }, //     §02
-      { label: "SCM — Stock Check Message", href: "/uld-message-builder/scm" }, //     §03
-      { label: "LUC Message Builder", href: "/uld-message-builder/luc" }, //          §04
-      { label: "Message Log", href: "/uld-message-builder/message-log" }, //          §05
-      { label: "Search ULD Messages", href: "/uld-message-builder/search" }, //       §06
-    ],
-  },
-
-  /* ── Planning & Capacity ──────────────────────────────────────────────────
-   * FC-13. Demand Forecast is FIRST: it is filed under M01 Flight & Airline
-   * Data as an INPUT, so the capacity view and the slot plan are built FROM it.
-   * The old rail listed it last, which read as though the forecast were a
-   * by-product of the roster. The /planner hub itself was unlisted; it is the
-   * portal entry point and is restored here.
-   * -------------------------------------------------------------------------- */
-  {
-    portal: "planning",
-    label: "Planning & Capacity",
-    icon: Calendar,
-    href: "/planner",
-    subItems: [
-      { label: "Planning Home", href: "/planner" }, //                                §00
-      { label: "Demand Forecast", href: "/planner/demand-forecast" }, //              §01 / M01
-      { label: "Capacity Dashboard", href: "/planner/capacity-dashboard" }, //        §02
-      { label: "Slot Planner", href: "/planner/slot-planner" }, //                    §03
-      { label: "Resource Roster", href: "/planner/resource-roster" }, //              §04
-    ],
-  },
-
-  /* ── Operations Supervision ───────────────────────────────────────────────
-   * FC-14, ordered as the supervisor's shift arc: watch the floor, measure it,
-   * handle what escalates, hand the shift over, record the notes. The root is a
-   * redirect to live-ops-view and, like the other persona roots, was missing
-   * from the old rail.
-   * -------------------------------------------------------------------------- */
-  {
-    portal: "supervision",
     label: "Operations Supervision",
     icon: Gauge,
     href: "/operations-supervisor",
@@ -682,15 +493,53 @@ const RAIL: NavBlock[] = [
       { label: "MoM / Floor Notes", href: "/operations-supervisor/mom-floor-notes" }, // §05
     ],
   },
-
-  /* ── Administration ───────────────────────────────────────────────────────
-   * Tenant configuration and the WRITE side of RBAC, ordered identity →
-   * permissions → reference data → integrations → settings → the two read-back
-   * logs. Kept strictly separate from Audit & Oversight below: an admin who can
-   * edit roles must not be the same surface that certifies them.
-   * -------------------------------------------------------------------------- */
   {
-    portal: "administration",
+    portal: "consignee",
+    label: "Customer Self-Service",
+    icon: Receipt,
+    href: "/consignee/dashboard",
+    subItems: [
+      { label: "Dashboard", href: "/consignee/dashboard" }, //                       FC-02 §30
+      { label: "My Shipments", href: "/consignee/my-shipments" }, //                 FC-02 §30
+      { label: "Notice of Arrival", href: "/consignee/notice-of-arrival" }, //        FC-06 §01
+      { label: "Pay & Download DO", href: "/consignee/pay-do" }, //                   FC-02 §32–33
+      { label: "Schedule Pickup", href: "/consignee/schedule-pickup" }, //            FC-08 §01
+      { label: "POD History", href: "/consignee/pod-history" }, //                    FC-08 §14
+    ],
+  },
+  {
+    portal: "consignee",
+    label: "Customs Broker Desk",
+    icon: UserCheck,
+    href: "/cha",
+    subItems: [
+      { label: "Dashboard", href: "/cha" }, //                                       FC-06 §02
+      { label: "GD Filing Workbench", href: "/cha/gd-filing-workbench" }, //          FC-06 §03
+      { label: "Channel-Specific Workflow", href: "/cha/channel-specific-workflow" }, // §04–05
+      { label: "OOC Tracking", href: "/cha/ooc-tracking" }, //                        §08
+      { label: "Payments", href: "/cha/payments" }, //                                FC-07 §13
+      { label: "DO Collection", href: "/cha/do-collection" }, //                      FC-08 §01
+      { label: "Re-export / Long-Stay Console", href: "/cha/re-export-long-stay" }, // FC-10
+    ],
+  },
+  {
+    portal: "consignee",
+    label: "Freight Forwarder Desk",
+    icon: Ship,
+    href: "/forwarding-agent",
+    subItems: [
+      { label: "Dashboard", href: "/forwarding-agent" },
+      { label: "AWB Entry — Digital", href: "/forwarding-agent/awb-entry-digital" }, //   FC-01 §22a
+      { label: "Pickup Scheduling", href: "/forwarding-agent/pickup-scheduling" }, //     FC-08 §01
+      { label: "Driver Register", href: "/forwarding-agent/driver-register" }, //         FC-08 §03
+      { label: "Vehicle Register", href: "/forwarding-agent/vehicle-register" }, //       FC-08 §12
+      { label: "Dispatch Documents", href: "/forwarding-agent/dispatch-documents" },
+      { label: "Payments", href: "/forwarding-agent/payments" }, //                       FC-07 §13
+      { label: "Notifications & History", href: "/forwarding-agent/notifications-history" },
+    ],
+  },
+  {
+    portal: "superadmin",
     label: "Administration",
     icon: UserCog,
     href: "/admin",
@@ -705,16 +554,8 @@ const RAIL: NavBlock[] = [
       { label: "Session & Event Log", href: "/admin/event-log" }, //                  §M20-02
     ],
   },
-
-  /* ── Audit & Oversight ────────────────────────────────────────────────────
-   * Read-only, and last, because nothing flows out of it. /reports joins the
-   * auditor screens here rather than sitting alone in a utilities bucket: both
-   * are M19/M20 output surfaces for the same audience, and the old rail split
-   * that one audience across two sections. Ordered home → the two traces → the
-   * RBAC certification → the export that leaves the building.
-   * -------------------------------------------------------------------------- */
   {
-    portal: "audit",
+    portal: "superadmin",
     label: "Audit & Oversight",
     icon: ShieldCheck,
     href: "/auditor",
@@ -725,6 +566,46 @@ const RAIL: NavBlock[] = [
       { label: "RBAC Snapshot", href: "/auditor/rbac-snapshot" }, //                  §M20-05
       { label: "Export Centre", href: "/auditor/export-centre" }, //                  §M20-06
       { label: "Reports & Dashboards", href: "/reports" }, //                         §M19-02
+    ],
+  },
+  {
+    portal: "superadmin",
+    label: "Architecture & Flows",
+    icon: Network,
+    href: "/modules",
+    subItems: [
+      { label: "Module Map", href: "/modules" },
+      { label: "Flow Walkthroughs", href: "/flows/FC-01", matchPrefix: "/flows" },
+    ],
+  },
+  {
+    portal: "superadmin",
+    label: "Integrations",
+    icon: Plug,
+    href: "/integration-status",
+    subItems: [
+      { label: "Integration Status", href: "/integration-status" },
+      { label: "RFID Integration", href: "/rfid-integration" },
+      // Build-QA surface rather than a client-facing screen. It is listed rather
+      // than hidden because the audit rule for this rail is that every route under
+      // app/ appears in exactly one portal — an unlisted route is an unowned route.
+      { label: "QA Checklist (internal)", href: "/qa-checklist" },
+    ],
+  },
+  {
+    // These four render outside the app shell (LayoutClient skips AppShell for
+    // them), so following one of these links leaves the rail behind. They are
+    // listed anyway because they are real, owned routes and because the demo is
+    // frequently walked through each auth state on purpose.
+    portal: "superadmin",
+    label: "Access & Session",
+    icon: KeyRound,
+    href: "/login",
+    subItems: [
+      { label: "Sign In", href: "/login" },
+      { label: "Session Expired", href: "/auth/session-expired" },
+      { label: "Permission Denied", href: "/auth/permission-denied" },
+      { label: "No Access", href: "/auth/no-access" },
     ],
   },
 ];
@@ -782,12 +663,20 @@ export default function Sidebar({ collapsed, onToggle, onMobileClose }: SidebarP
     (item.matchPrefix !== undefined &&
       (pathname === item.matchPrefix || pathname.startsWith(item.matchPrefix + "/")));
 
-  const renderBlock = (block: NavBlock) => {
+  /**
+   * Takes the structural shape rather than `NavBlock` so it can render HOME,
+   * which deliberately has no portal. Keyed on href because the audit
+   * guarantees every route appears in the rail exactly once.
+   */
+  const renderBlock = (block: NavLeaf & {
+    icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+    subItems?: NavLeaf[];
+  }) => {
     const Icon = block.icon;
     const isActive = hits(block) || (block.subItems?.some(hits) ?? false);
 
     return (
-      <div key={`${block.portal}:${block.label}`}>
+      <div key={block.href}>
         <Link
           href={block.href}
           onClick={() => onMobileClose?.()}
@@ -841,9 +730,9 @@ export default function Sidebar({ collapsed, onToggle, onMobileClose }: SidebarP
 
   /**
    * Group the flat rail into headed runs. A run is a maximal stretch of
-   * consecutive blocks owned by the same portal, so the fourteen headings fall
-   * out of the ordering rather than being declared alongside it. A portal that
-   * appears twice — only Terminal Operations does — renders its second run as a
+   * consecutive blocks owned by the same portal, so the three headings fall out
+   * of the ordering rather than being declared alongside it. If a portal ever
+   * has to be interrupted for flow reasons it renders its second run as a
    * continuation, which is honest about the interruption instead of hiding it.
    */
   const runs: { portal: PortalId; blocks: NavBlock[]; continued: boolean }[] = [];
@@ -874,6 +763,9 @@ export default function Sidebar({ collapsed, onToggle, onMobileClose }: SidebarP
 
       <div className="flex-1 overflow-y-auto py-3">
         <nav className="flex flex-col gap-0.5 px-2">
+          {/* Home sits above the three portal headings — it is where you arrive,
+              not a screen inside any one portal. */}
+          {renderBlock(HOME)}
           {runs.map((run, idx) => {
             const meta = PORTALS[run.portal];
             return (

@@ -111,33 +111,49 @@ Port, verify, then delete.
 | `/finance-manager/payment-gateway-reconciliation` | Gateway/webhook reconciliation — named providers (HBL, Meezan, NIFT, Easypaisa, JazzCash, 1LINK), refunds, webhook errors. `/billing/invoice` deliberately shows only the legacy-instrument queue. |
 | `/finance-manager/waiver-workflow`, `/finance-manager/invoice-generation` | The FC-07 §10–12 approval chain |
 
-## 3. The fourteen portals
+## 3. The three portals
 
-Every surviving route belongs to exactly one portal. All fourteen stay reachable from one sidebar so
-the prototype shows the whole picture; each is self-contained enough to be lifted into its own
-repository later.
+**Superseded, 14 Aug 2026:** an earlier draft of this section proposed fourteen portals. The client
+fixed the number at **three**, in this order.
 
-| # | Portal | Audience | Routes | Flow |
+Every surviving route belongs to exactly one portal. All three stay reachable from one sidebar so the
+prototype shows the whole picture; each is self-contained enough to be lifted into its own repository
+later, which is what the `audience` tag records — it is the split boundary, written into the nav.
+
+| # | Portal | Audience | What it is | Flows |
 |---|---|---|---|---|
-| 1 | Terminal Operations | internal-ops | 42 | FC-01 · FC-02 · FC-03 · FC-04 · FC-06 · FC-09 · FC-10 · FC-11 |
-| 2 | Warehouse | internal-ops | 6 | FC-03 · FC-08 §07–10 |
-| 3 | Gate & Yard | internal-ops | 6 | FC-08 §02–04, §12–13 |
-| 4 | Equipment & Lifter Fleet | internal-ops | 6 | **FC-15** |
-| 5 | Planning & Capacity | internal-ops | 5 | **FC-13** |
-| 6 | Operations Supervision | internal-ops | 6 | **FC-14** |
-| 7 | Finance | internal-ops | 12 | FC-07 · **FC-17** |
-| 8 | ULD Management | internal-ops | 7 | **FC-16** |
-| 9 | Customer Portal | customer | 6 | FC-02 consignee lane |
-| 10 | CHA Portal | agent | 7 | FC-06 · FC-07 §13 · FC-08 §01 · FC-10 |
-| 11 | Forwarding Agent Portal | partner | 8 | FC-01 §22a · FC-07 §13 · FC-08 §01–04 |
-| 12 | Administration | admin | 8 | FC-12 platform |
-| 13 | Audit & Oversight | oversight | 6 | FC-12 M19/M20 |
-| 14 | Platform | platform | 10 | shared shell — the only routes that stay behind when the portals split |
+| **1** | **Warehouse Portal** | internal-ops | Cargo handling and airport services — everything SAPS staff do to a consignment, from forecast to file closure | FC-01 … FC-11 · FC-13 … FC-17 |
+| **2** | **Consignee Portal** | customer | The external parties SAPS serves | FC-02 consignee lane · FC-06 · FC-07 §13 · FC-08 §01 · FC-10 |
+| **3** | **Superadmin Portal** | admin | Platform administration, oversight and the shared shell | FC-12 · M19 / M20 |
 
-Two corrections to note: the **Forwarding Agent portal is not FC-18** (that is Airmail) — it is an
-actor portal over FC-01/FC-07/FC-08 touchpoints and needs no flow of its own. And **`/awb/[awbId]`
-has no sidebar entry at all today** despite being the hub twelve flow steps target; it moves into
-Platform as a first-class entry.
+**Warehouse Portal**, in flow order — 17 blocks:
+AWB Hub · Planning & Capacity · Import Documentation · Storage & Allocation · Warehouse Floor ·
+Lifter Fleet · Messaging & Alerts · ULD Messaging · Customs Clearance · Tariff & Charges ·
+Invoice, Payment & Release · Gate & Yard · Dispatch & Closure · Exceptions & CDR · Transhipment ·
+Export · Operations Supervision
+
+**Consignee Portal** — 3 blocks: Customer Self-Service · Customs Broker Desk · Freight Forwarder Desk
+
+**Superadmin Portal** — 5 blocks: Administration · Audit & Oversight · Architecture & Flows ·
+Integrations · Access & Session
+
+### Why the CHA and the freight forwarder sit in the Consignee portal
+
+With three portals rather than fourteen, the broker and the forwarder have to land somewhere. They go
+with the consignee because they are **the same side of the counter** — people SAPS serves, not people
+SAPS employs. Putting them in Warehouse would put a broker's screens in the terminal's repository
+when the split happens, which is the one outcome the `audience` boundary exists to prevent.
+
+### Two details preserved from the fourteen-portal draft
+
+- **Planning leads the Warehouse portal.** FC-13 ends at "flight arrives; receipt begins under
+  FC-01 / FC-02", so the forecast genuinely precedes the import spine rather than trailing it.
+- **`/awb/[awbId]` has a first-class entry.** It had no sidebar entry at all before this work despite
+  being the declared target of twelve flow steps; it now opens the Warehouse portal as the record
+  every other screen drills into.
+
+**Home** sits above all three headings. It belongs to no portal — it is the page you arrive on before
+choosing one — and giving it a portal id would render a fourth heading.
 
 ## 4. Flow-ordered navigation
 
