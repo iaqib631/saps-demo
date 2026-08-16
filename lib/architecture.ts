@@ -503,7 +503,7 @@ export const FLOWS: FlowDef[] = [
     docNo: "SAPS-ACMS-FC-01",
     rev: "Rev 2.0",
     amendment:
-      "Step 05 becomes OCR-assisted intake (05a–05f): scan → auto-extract line items with per-item confidence → operator accepts/corrects → capture declared (OCR) vs physical (received) → commit. A variance ≥ tolerance raises a CDR directly (FC-04). A4: step 22 splits — 22a the CHA requests the DO after the NOA, 22b the terminal issues it after payment clears and all five release conditions pass as an AND. A5: the duplicated orphan “08 Discrepancy Found?” / “SB3” pair with its self-referencing Yes edge is deleted; one diamond survives. A6: the §14 → §08 back-edge is deleted — a weighing or condition discrepancy at §14 raises a CDR at §14a instead of rewinding past indexation, tagging, split and segregation.",
+      "Step 05 becomes OCR-assisted intake (05a–05f): scan → auto-extract line items with per-item confidence → operator accepts/corrects → capture declared (OCR) vs physical (received) → commit. A variance ≥ tolerance raises a CDR directly (FC-04). A4: step 22 splits — 22b the terminal issues the DO after payment clears and all five release conditions pass as an AND, and 22a is where the CHA collects the issued DO. The “requested after the NOA” reading of 22a is retired: its screen is /cha/do-collection, whose queue opens at “DO Ready” and runs DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected. There is no requested state on it, so 22a cannot precede the issuance it collects, and it now sits below 22b. A5: the duplicated orphan “08 Discrepancy Found?” / “SB3” pair with its self-referencing Yes edge is deleted; one diamond survives. A6: the §14 → §08 back-edge is deleted — a weighing or condition discrepancy at §14 raises a CDR at §14a instead of rewinding past indexation, tagging, split and segregation.",
     steps: [
       { ref: "01–04", label: "Handover, pouch opening", href: "/import/flights", module: "M01" },
       { ref: "05", label: "Document verification (OCR intake 05a–05f)", href: "/import/ocr-intake", module: "M02" },
@@ -517,11 +517,18 @@ export const FLOWS: FlowDef[] = [
       { ref: "15–16", label: "Storage allocation, data capture", href: "/storage/allocation", module: "M05" },
       { ref: "17", label: "IATA messaging (ARR / RCF / NFD)", href: "/messaging/iata", module: "M07" },
       { ref: "18", label: "Notice of Arrival to consignee / CHA", href: "/import/arrival-advice", module: "M08" },
-      { ref: "22a", label: "DO requested by CHA / consignee (after NOA)", href: "/cha/do-collection", module: "M12", note: "A4 — the request half of old step 22. Sits after §18 NOA and before customs, which is what the connectors always said. Creates a DO request; it does not release cargo." },
       { ref: "19", label: "Customs clearance tracking", href: "/customs/channels", module: "M09" },
       { ref: "20–21", label: "Charges calculation, invoice", href: "/billing/calculator", module: "M10" },
       { ref: "21a", label: "Godown rent voucher issued", href: "/billing/godown-rent", module: "M11", note: "A10 — this is where FC-07 ends. Everything below is FC-01/M12 and beyond." },
       { ref: "22b", label: "DO issued by the terminal — after payment + the five-condition release gate", href: "/billing/delivery-order", module: "M12", note: "A4/A11 — the issue half of old step 22. Gated on the AND of OOC verified against the SD · AWB authority verified · DO charges paid · cargo not on hold · special clearance completed. evaluateReleaseGate() in lib/domain/finance.ts." },
+      /*
+       * §22a moved below §22b. It was drawn above §19 customs as the "request"
+       * half of the split, but its screen is /cha/do-collection, a collection
+       * queue whose first state is "DO Ready" — an already-issued DO awaiting a
+       * driver. Collection cannot precede issuance, and FC-02 §33 and FC-08 §01
+       * both put the same act after the DO exists.
+       */
+      { ref: "22a", label: "DO collected by the CHA / consignee — driver and vehicle assigned against the issued DO", href: "/cha/do-collection", module: "M12", note: "A4 — the collection half of old step 22, and it follows §22b issuance. The queue runs DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected; nothing on it raises a request. Collecting does not release cargo either — release is the gate-out re-check at §24." },
       { ref: "23", label: "Gate pass", href: "/dispatch/gate-pass", module: "M13" },
       { ref: "24", label: "Physical delivery / dispatch", href: "/dispatch/gate-out", module: "M13" },
       { ref: "25–26", label: "POD capture, DLV message", href: "/dispatch/closure", module: "M14" },
@@ -543,6 +550,15 @@ export const FLOWS: FlowDef[] = [
     // (11–14) both hang off "Manifest checked" and run concurrently; they
     // rejoin where the warehoused location is captured against the AWB.
     steps: [
+      /*
+       * §00 is upstream of the flight itself: the forwarding agent's digital
+       * pre-lodgement carries the scheduled arrival, so it is submitted before
+       * §01 notifies that arrival. It is the electronic alternative to the
+       * pouch §06a scans, and its piece matrix is the declared count that §11
+       * physically counts against.
+       */
+      { lane: "Consignee / CHA", ref: "00", label: "AWB pre-lodged digitally by the forwarding agent — MAWB / HAWB, flight & routing, piece matrix, documents, payment intent", href: "/forwarding-agent/awb-entry-digital", module: "M03", note: "Five-section wizard with per-step validation, ending in “Submit to SAPS”. Optional path — a shipment that arrives on paper joins the flow at §01 and is captured by OCR at §06a instead." },
+
       { lane: "Airline / Carrier", ref: "01", label: "Flight arrival notification", href: "/import/flights", module: "M01" },
       { lane: "Airline / Carrier", ref: "02", label: "FFM / FWB / FHL received", href: "/messaging/iata", module: "M07" },
       { lane: "Airline / Carrier", ref: "03", label: "Cargo + flight pouch (concertina) handed over to terminal", href: "/import/flights", module: "M01" },
@@ -568,9 +584,20 @@ export const FLOWS: FlowDef[] = [
 
       { lane: "Documentation", ref: "15", label: "Storage location captured", href: "/storage/allocation", module: "M05" },
       { lane: "Documentation", ref: "16", label: "Status updated", href: "/awb/1", module: "M03" },
-      { lane: "Documentation", ref: "17", label: "Messages triggered — RCF on warehousing", href: "/messaging/iata", module: "M07", note: "A7 — RCF fires here. NFD no longer fires off the racking event; it follows the NOA at §30a. NOA to the consignee is §30, not §22." },
+      { lane: "Documentation", ref: "17", label: "Messages triggered — RCF on warehousing", href: "/messaging/iata", module: "M07", note: "A7 — RCF fires here. NFD no longer fires off the racking event; it follows the NOA at §30a. NOA to the consignee is §30, not §22, and §30 is drawn immediately below this node rather than after the finance lane." },
 
-      { lane: "Customs / Agencies", ref: "18", label: "GD filed in PSW / WeBOC", href: "/customs/filing", module: "M09", note: "SD replaces GD; PSW primary, WeBOC parallel-run." },
+      /*
+       * §30 / §30a moved up from below §29. §18 GD filing is the CHA's act, and
+       * the CHA is only brought into the shipment by the NOA — FC-06 states the
+       * order outright (§01 NOA → §02 CHA collects documents → §03 SD filed) and
+       * FC-01 does too. Drawn after §29 the consignee was paying at §29 for a
+       * shipment it was first told about at §30. §30a travels with §30 because
+       * A7 wires NFD to the NOA's own issue event (warehoused → NOA → NFD).
+       */
+      { lane: "Consignee / CHA", ref: "30", label: "NOA received", href: "/consignee/notice-of-arrival", module: "M08", note: "The receipt surface, not the issue surface: notice status Unread / Read / Action Required / Resolved, free-period expiry countdown, documents-required list and a recommended action. /import/arrival-advice is the terminal issuing it — FC-05 §03 and FC-06 §01." },
+      { lane: "Consignee / CHA", ref: "30a", label: "NFD — Notified for Delivery sent (fires after the NOA)", href: "/messaging/iata", module: "M07", note: "A7 — moved off the cargo-warehoused trigger. TRIGGER_MAP in lib/domain/messaging.ts owns the wiring." },
+
+      { lane: "Customs / Agencies", ref: "18", label: "GD filed in PSW / WeBOC", href: "/customs/filing", module: "M09", note: "SD replaces GD; PSW primary, WeBOC parallel-run. Reached from §30 — the CHA files against the NOA it has just received." },
       { lane: "Customs / Agencies", ref: "19", label: "Customs channel assigned", href: "/customs/channels", module: "M09" },
       { lane: "Customs / Agencies", ref: "20", label: "Risk channel — Green / Yellow / Red?", href: "/customs/channels", module: "M09", decision: true, note: "A8 — the third channel is Red (physical examination + sampling). “Normal” is retired. Yellow and Red were absent from this lane entirely; all three edges now exist." },
       { lane: "Customs / Agencies", ref: "21", label: "ANF / ASF clearance if required", href: "/customs/channels", module: "M09" },
@@ -579,20 +606,28 @@ export const FLOWS: FlowDef[] = [
       { lane: "Finance / Billing", ref: "23", label: "Storage clock reads the intake timestamp (§04 receipt / §11 count)", href: "/billing/godown-rent", module: "M11", note: "A3 — the clock STARTS at intake. Finance reads that timestamp; it does not set it. The board's “general & pharma only” annotation is a free-period rule, not a clock rule: the clock runs for every class, and the class decides how many free days precede the chargeable period at §24." },
       { lane: "Finance / Billing", ref: "24", label: "Free / grace period applied → chargeable days = dwell − free", href: "/billing/calculator", module: "M10", note: "A3 — free period follows the clock start. chargeableDays = max(0, totalDays − freeDays) + supplementDays, calculateCharges() in lib/domain/finance.ts." },
       { lane: "Finance / Billing", ref: "25", label: "Chargeable weight calculated", href: "/billing/calculator", module: "M10" },
-      { lane: "Finance / Billing", ref: "26", label: "Tariff applied", href: "/billing/calculator", module: "M10", note: "P5-1 — the tariff master is not yet versioned; a rate change would silently restate historic invoices." },
+      { lane: "Finance / Billing", ref: "26", label: "Tariff applied", href: "/billing/calculator", module: "M10", note: "The tariff master IS versioned — /finance-manager/tariff-master-editor carries TariffVersion with effectiveFrom / effectiveTo, status, createdBy and approvedBy, and the calculator stores tariffVersion on the calculation rather than looking it up at render, so a rate change cannot restate historic invoices. The version in force is resolved at FC-07 §07a. This note previously asserted the opposite; it was stale." },
       { lane: "Finance / Billing", ref: "27", label: "Invoice generated", href: "/billing/invoice", module: "M10" },
       { lane: "Finance / Billing", ref: "28", label: "Adjustment / waiver if required", href: "/billing/invoice", module: "M10", note: "Role & rights restricted, per the flow's own annotation." },
       { lane: "Finance / Billing", ref: "29", label: "Payment received", href: "/billing/invoice", module: "M10" },
 
-      { lane: "Consignee / CHA", ref: "30", label: "NOA received", href: "/import/arrival-advice", module: "M08" },
-      { lane: "Consignee / CHA", ref: "30a", label: "NFD — Notified for Delivery sent (fires after the NOA)", href: "/messaging/iata", module: "M07", note: "A7 — moved off the cargo-warehoused trigger. TRIGGER_MAP in lib/domain/messaging.ts owns the wiring." },
       { lane: "Consignee / CHA", ref: "31", label: "Documents submitted", href: "/gate-entry/authority-letter-digitisation", module: "M13", note: "Scan point 2 of 2 — the receiver's documents are scanned and OCR'd at collection." },
-      { lane: "Consignee / CHA", ref: "32", label: "Charges paid", href: "/billing/invoice", module: "M10" },
-      { lane: "Consignee / CHA", ref: "33", label: "DO collected", href: "/billing/delivery-order", module: "M12" },
+      { lane: "Consignee / CHA", ref: "32", label: "Charges paid", href: "/consignee/pay-do", module: "M10", note: "The consignee's own gateway journey — “Payment initiated. Redirecting to gateway…” → Payment Successful / Payment Failed with a transaction reference. /billing/invoice is the terminal's ledger view of the same event at §29." },
+      { lane: "Consignee / CHA", ref: "33", label: "DO collected", href: "/cha/do-collection", module: "M12", note: "Re-pointed at the collecting party's own queue — DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected. /billing/delivery-order is the terminal issuing the DO." },
+      { lane: "Consignee / CHA", ref: "33a", label: "Pickup slot booked — eligibility checked (OOC · charges · DO issued · no hold), driver and vehicle nominated", href: "/consignee/schedule-pickup", module: "M12", note: "The join into FC-13 §06: the booking runs on the planner's slot grid, so a slot the planner has blocked is refused here. The forwarding agent books the same slot from /forwarding-agent/pickup-scheduling — one action, two surfaces, not two steps." },
+
+      /*
+       * §36 moved up from the end of the flow to sit between §33 and §34. It is
+       * gate-out — the terminal authorising the cargo to leave — so it has to
+       * precede the collection it authorises and the POD signed at handover.
+       * FC-08 orders the same three events §11 gate-out → §12 POD → §14
+       * delivered, and FC-01 runs §24 dispatch → §25–26 POD.
+       */
+      { lane: "Cargo Terminal / Warehouse", ref: "36", label: "Cargo released after DO", href: "/dispatch/gate-out", module: "M13", note: "Gate-out matches the RFID tag to the gate pass + DO and auto-checks OOC, charges paid and no-hold." },
+
       { lane: "Consignee / CHA", ref: "34", label: "Cargo collected", href: "/dispatch/gate-out", module: "M13" },
       { lane: "Consignee / CHA", ref: "35", label: "POD signed", href: "/dispatch/closure", module: "M14" },
-
-      { lane: "Cargo Terminal / Warehouse", ref: "36", label: "Cargo released after DO", href: "/dispatch/gate-out", module: "M13", note: "Gate-out matches the RFID tag to the gate pass + DO and auto-checks OOC, charges paid and no-hold." },
+      { lane: "Consignee / CHA", ref: "35a", label: "POD retrieved by the consignee; delivery dispute raised against the signed POD", href: "/consignee/pod-history", module: "M14", note: "The dispute is the step that exists nowhere else — reason, 500-character description, evidence upload and an evidence bundle download. FC-08's closure has no post-delivery challenge path without it." },
     ],
   },
   {
@@ -608,11 +643,21 @@ export const FLOWS: FlowDef[] = [
       { ref: "—", label: "Class / subclass set at intake", href: "/awb/1?tab=intake", module: "M03" },
       { ref: "—", label: "System suggests rack / bin", href: "/warehouse-manager/putaway", module: "M05", note: "Rules engine is P2-1/P2-2" },
       { ref: "—", label: "Location valid & available?", href: "/warehouse-manager/storage-map", module: "M05" },
-      { ref: "—", label: "Bind RFID tag → location; confirm by scan", href: "/lifter-operator/rfid-scan", module: "M05", note: "Binding is P2-4" },
       { ref: "A", label: "General / Normal zones (GCR, AFU, ICG, UAB)", href: "/warehouse-manager/storage-map", module: "M05" },
       { ref: "B", label: "Special handling — DGR, PER, VAL, AVI, HUM, AOG, DIP, VUN, PHR", href: "/warehouse-manager/storage-map", module: "M05", note: "A1 — DGR routes to the segregated DG store, not to cold chain. PHR is on the roster but does NOT share DGR's destination; see §B-COL." },
       { ref: "B-COL", label: "Pharma (PHR) / temperature-controlled → Cold Chain Storage (COL/CRT, 2–8 °C)", href: "/warehouse-manager/cold-chain", module: "M05", note: "A1 — Pharma routes to cold chain, NOT to Dangerous Goods. lib/domain/masters.ts already models class 13 Pharmaceuticals (PHR) → subclass “Pharma — GDP” → Pharma Store, band 2–8 °C. The board was wrong and the code was right." },
       { ref: "C", label: "Controlled / exception zones", href: "/exceptions/queue", module: "M06" },
+      /*
+       * The bind step moved to the foot of the array. §A, §B, §B-COL and §C are
+       * the branch outcomes of "System suggests rack / bin" and "Location valid
+       * & available?" — they are what resolves the location. The bind names a
+       * location, so it cannot run above the branch that chooses one, and drawn
+       * there it left all four destinations dangling below it. FC-15 gives the
+       * real order: §06 tag matched → §07 pickup → §08 drop-off scanned at the
+       * destination → §08a binding written back to storage. Binding is the last
+       * act of putaway, not the first.
+       */
+      { ref: "—", label: "Bind RFID tag → location; confirm by scan", href: "/lifter-operator/rfid-scan", module: "M05", note: "Binding is P2-4. Same event as FC-15 §08a — one scan, one record; FC-02 §14 warehoused → §15 storage location captured says the same." },
     ],
   },
   {
@@ -686,6 +731,14 @@ export const FLOWS: FlowDef[] = [
 
       { lane: "Dispatch & receipts", ref: "16", label: "Channel + template version resolved (Email / SMS / WhatsApp)", href: "/messaging/notifications", module: "M08" },
       { lane: "Dispatch & receipts", ref: "17", label: "Dispatched; delivery and read receipts recorded, failures surfaced for retry", href: "/messaging/notifications", module: "M08" },
+      { lane: "Dispatch & receipts", ref: "17a", label: "Recipient opens the notification — read receipt raised, action taken or resolved from the inbox", href: "/forwarding-agent/notifications-history", module: "M08", note: "The producer of the read receipt §17 records. The inbox also jumps straight out to payment and pickup scheduling, so a notification is where the recipient's next act starts." },
+      /*
+       * §18 is the carrier side of "failures surfaced for retry". §17 hrefs at
+       * /messaging/notifications, which is the customer-notification channel;
+       * a carrier gateway refusing traffic is triaged per message, not per
+       * customer, and that console is /messaging/customs.
+       */
+      { lane: "Dispatch & receipts", ref: "18", label: "Carrier message failure triage — airline, carrier reference, retry count, error and raw payload per message", href: "/messaging/customs", module: "M07", note: "The message-level question, where /messaging/iata answers the flight-level one. It carries four dimensions the canonical IataMessage model has no field for — airline, carrier reference, retry count and a per-message audit trail — plus ARR and FIW, two live types outside FC-05's canonical thirteen." },
     ],
   },
   {
@@ -702,13 +755,39 @@ export const FLOWS: FlowDef[] = [
       { ref: "03", label: "SD filed (GD in CMTS terms)", href: "/customs/filing", module: "M09", note: "Filed to both providers during the parallel run" },
       { ref: "03a", label: "Gateway submission — PSW primary / WeBOC parallel", href: "/customs/gateway", module: "M09", note: "BLK-04 — divergence blocks settlement" },
       { ref: "04", label: "Risk channel assigned (fetched, not typed)", href: "/customs/channels", module: "M09" },
-      { ref: "05-G", label: "Green — auto-cleared", href: "/customs/channels", module: "M09" },
-      { ref: "05-Y", label: "Yellow — document scrutiny → query loop", href: "/customs/channels", module: "M09" },
-      { ref: "05-R", label: "Red — physical examination → sampling", href: "/customs/channels", module: "M09", note: "A8 — the three channels are Green / Yellow / Red. “Normal” is retired, along with the RISK_CHANNEL_FLOW_LABEL map that rendered red as “Normal” and the BLK-03 banner on the channels screen." },
+      /*
+       * §04a sits between the channel assignment and the per-channel work
+       * because it is what routes a declaration to either of them: its rows
+       * open Channel Detail (§05-*) and Capture OOC (§08a-K). It also carries
+       * Apply Hold / Release Hold, which are real writes and the only hold
+       * node anywhere on FC-06.
+       */
+      { ref: "04a", label: "Declarations queued for officer action — channel, CHA, cargo class, age; hold applied or released from the queue", href: "/customs/queue", module: "M09", note: "Six row actions: View Channel Detail · Capture OOC · Apply Hold · Release Hold · View AWB · Customs Messaging. The hold it applies is the same HOLDINGSTATUS the FC-05 §14 Customs Hold Alert fires off." },
+      /*
+       * §05-G / §05-Y / §05-R re-pointed from /customs/channels to
+       * /customs/channel-detail. The channels screen is a read-only viewer of
+       * query and examination records; channel-detail is the workbench where a
+       * scrutiny is recorded, and its three panels are exactly these three
+       * refs — Green a 5-point readiness checklist, Yellow query capture, Red
+       * examination scheduling. §04 and §06–§09 stay on the viewer.
+       */
+      { ref: "05-G", label: "Green — auto-cleared", href: "/customs/channel-detail", module: "M09", note: "The Green panel is a 5-point readiness checklist run before auto-release." },
+      { ref: "05-Y", label: "Yellow — document scrutiny → query loop", href: "/customs/channel-detail", module: "M09", note: "The Yellow panel: the 9-item document review plus query capture — query reference, response notes, supporting documents, reviewer remarks. The broker's half of the same loop is §05-C." },
+      { ref: "05-R", label: "Red — physical examination → sampling", href: "/customs/channel-detail", module: "M09", note: "A8 — the three channels are Green / Yellow / Red. “Normal” is retired, along with the RISK_CHANNEL_FLOW_LABEL map that rendered red as “Normal” and the BLK-03 banner on the channels screen. The Red panel schedules the exam — date, time, bay, officer, sample required and type, result tri-state, remarks, photo evidence." },
       { ref: "05-R1", label: "Examination discrepancy → cargo detained", href: "/customs/detained", module: "M09", note: "Gap G1 — the sub-identity carries across 12 tables" },
+      { ref: "05-C", label: "CHA responds to the yellow-channel query and attends the red-channel examination", href: "/cha/channel-specific-workflow", module: "M09", note: "The broker's side of §05-Y and §05-R, which had a customs side and no counterparty: response submitted to customs, supporting documents attached, query marked resolved, exam scheduled, exam evidence uploaded." },
       { ref: "06", label: "Duty / sales tax / FED / WHT assessed and paid", href: "/customs/channels", module: "M09" },
       { ref: "07", label: "ANF / ASF clearance", href: "/customs/channels", module: "M09" },
-      { ref: "08a", label: "OOC issued and captured — fetched from PSW, or keyed from the print", href: "/customs/channels", module: "M09", note: "Capture only. On its own this carries no release authority; the old direct edge from here to §09 is deleted." },
+      { ref: "08a", label: "OOC issued and captured — fetched from PSW, or keyed from the print", href: "/customs/channels", module: "M09", note: "Capture only. On its own this carries no release authority; the old direct edge from here to §09 is deleted. The keyed half of this label has its own screen at §08a-K." },
+      /*
+       * §08a-K is the keyed branch §08a's own label already promises. It is the
+       * sole writer of OutOfCharge.keyedAt — nothing else in the product can
+       * produce that value — and when the PSW gateway is down it is the only
+       * path that gets cargo released. Suffix follows the §05-G / §05-Y / §05-R
+       * convention already in this flow.
+       */
+      { ref: "08a-K", label: "OOC keyed from the counter print when the PSW gateway is down — source fixed at “keyed”", href: "/customs/ooc-capture", module: "M09", note: "OutOfCharge.source is set to “keyed” by construction, not by dropdown: a record keyed off a counter copy must not be able to badge itself as a gateway fetch. It still has to clear §08b like any other." },
+      { ref: "08a-C", label: "CHA tracks OOC issuance — OOC reference and PDF supplied, DO collection assigned to a driver", href: "/cha/ooc-tracking", module: "M09", note: "The broker-side feed for the same keyed-OOC path as §08a-K, and its driver assignment is the hand-off into FC-08 §01 / FC-02 §33." },
       { ref: "08b", label: "OOC reconciled field-by-field against the SD — every field agrees?", href: "/customs/channels", module: "M09", decision: true, note: "The gate. Yes → §09; No → the mismatching fields are listed and the OOC is re-fetched or re-keyed. oocVerified() / oocMismatches() in lib/domain/customs.ts, read by the “OOC verified against SD” release condition." },
       { ref: "09", label: "Verification passed → eligible for release → FC-07 charging", href: "/customs/channels", module: "M10", note: "Reached from §08b, never from §08a. Release eligibility is the verification, not the issuance." },
     ],
@@ -729,10 +808,25 @@ export const FLOWS: FlowDef[] = [
       { ref: "03a", label: "Chargeable period = dwell − free (+ supplements)", href: "/awb/1?tab=charges", module: "M10", note: "A3 — the only period priced. chargeableDays = max(0, totalDays − freeDays) + supplementDays, calculateCharges() in lib/domain/finance.ts." },
       { ref: "04–06", label: "Actual → volumetric (L×W×H/6000) → chargeable = max()", href: "/awb/3?tab=charges", module: "M10" },
       { ref: "07", label: "Category surcharge applied", href: "/awb/3?tab=charges", module: "M10" },
+      /*
+       * §07a / §07b sit above §08 because a slab cannot be applied before the
+       * rate set it belongs to is resolved. UPWARD_REFERENCES in Sidebar.tsx
+       * already states this relationship for the calculator — "the tariff is an
+       * input to the calculation, so it is established above it" — and it was
+       * missing from the flow.
+       */
+      { ref: "07a", label: "Tariff master version in force resolved — slab table, free days, minimum charge, effective dates", href: "/finance-manager/tariff-master-editor", module: "M10", note: "TariffVersion carries effectiveFrom / effectiveTo, status, createdBy and approvedBy, with an audit drawer behind it; the resolved version is stored on the calculation rather than looked up at render. FC-02 §26 says the same." },
+      { ref: "07b", label: "Negotiated tariff set applied — agent contract × consignee tier × route × class, rate override under approval", href: "/finance-manager/multi-tariff-engine", module: "M10", note: "A negotiated set overrides the master rate for the matching contract, and the override goes out for approval rather than taking effect on save." },
       { ref: "08", label: "Tariff slab applied (D1-3 / D4-7 / D8-14 / D15+)", href: "/awb/3?tab=charges", module: "M10" },
       { ref: "09", label: "Invoice / tax invoice generated", href: "/billing/invoice", module: "M11" },
       { ref: "10–12", label: "Waiver? → approval workflow → credit note", href: "/billing/invoice", module: "M11" },
+      { ref: "12a", label: "CHA settles the consignee's invoices from the broker desk — receipt issued, invoice dispute raised", href: "/cha/payments", module: "M11", note: "The payment is MADE here; §13 is where it is RECEIVED. The consignee's own equivalent surface is FC-02 §32 (/consignee/pay-do)." },
       { ref: "13", label: "Payment received", href: "/billing/invoice", module: "M11" },
+      /*
+       * The amendment says payment is "cash-less via gateway, auto-reconciled"
+       * and only the first half had a step. §13a is the second half.
+       */
+      { ref: "13a", label: "Gateway payment reconciled — webhook matched to the invoice, settlement, failure reason, refund status", href: "/finance-manager/payment-gateway-reconciliation", module: "M11", note: "Six providers — HBL, Meezan, NIFT, Easypaisa, JazzCash, 1LINK — with the verbatim webhook payload and a per-transaction audit trail. The gateway itself is a named FC-12 node at §11-P." },
       { ref: "14", label: "Release gate — ALL five conditions must pass (AND)", href: "/awb/3?tab=customs", module: "M11", decision: true, note: "A11 — AND, not the fan-out the board draws: OOC verified against the SD · AWB authority verified · DO charges paid · cargo not on hold · special clearance completed. Special clearance is conditional on cargo class (BLK-10) and shows N/A rather than blocking. evaluateReleaseGate() in lib/domain/finance.ts — canRelease is blockedBy.length === 0." },
       { ref: "15", label: "G.Rent voucher issued — end of FC-07", href: "/billing/godown-rent", module: "M11", note: "A10 — the five conditions gate THIS, not the DO. FC-07 ends here." },
       { ref: "→", label: "Handoff: DO issued by the terminal — FC-01 §22b (M12)", href: "/billing/delivery-order", module: "M12", note: "A10 — the DO is not an FC-07 node. It is issued after this voucher, on the FC-01 spine." },
@@ -748,6 +842,17 @@ export const FLOWS: FlowDef[] = [
       "RFID/scan-verified end to end: the tag bound at putaway is read at retrieval and gate-out, where it is matched to the gate pass + DO with an automatic re-check of OOC, DO charges and no-hold. POD is digital — e-signature + CNIC scan + geo/timestamp + photo. A2: the three verification decisions get real failure paths — cargo unavailable, piece-count mismatch and damage at the condition check all route to CDR (FC-04); as drawn, a short pick or a damaged piece at delivery had nowhere to go. A13: renumbered 01–16 with no gaps — SAPS confirmed the missing 02, 05 and 11 were misnumbering, not lost steps.",
     steps: [
       { ref: "01", label: "Consignee / agent presents DO", href: "/cha/do-collection", module: "M12" },
+      /*
+       * §01a–§01d are sub-refs so A13's contiguous 01–16 numbering survives.
+       * They fill the gap between presenting the DO and the gate verifying it:
+       * the agent pre-registers driver and vehicle, submits both to SAPS, and
+       * the vehicle is then admitted at the inbound gate. FC-08 modelled
+       * gate-OUT (§10, §11) and never modelled gate-IN at all.
+       */
+      { ref: "01a", label: "Driver pre-registered by the agent — CNIC, licence and expiry, allowed AWBs / DOs", href: "/forwarding-agent/driver-register", module: "M13", note: "This is the register §02 verifies against. It is the agent-side twin of /gate-entry/driver-identity-register: same driver, two sides of the counter, kept apart by the internal-ops / customer portal split rather than by content." },
+      { ref: "01b", label: "Vehicle pre-registered by the agent — number, type, capacity, insurance expiry", href: "/forwarding-agent/vehicle-register", module: "M13" },
+      { ref: "01c", label: "Authority letter and vehicle pre-registration submitted to SAPS, queued for review", href: "/forwarding-agent/dispatch-documents", module: "M13", note: "The submission §03 verifies and FC-02 §31 scans. The queue carries Submitted At / Reviewed By / Status, which is what makes §01a and §01b two-sided rather than duplicated." },
+      { ref: "01d", label: "Vehicle admitted at the inbound gate — entry timestamp, guard, photo; seven-point verification; allow / hold / reject", href: "/gate-entry/vehicle-entry", module: "M13", decision: true, note: "Seven checks: CNIC Valid · Authority Letter · DO/AWB Validation · Payment Status · Customs Hold · Vehicle Status · Driver Visit History. Three exits, and none of them were on the board — FC-08 drew the exit gate and not the entry gate." },
       { ref: "02", label: "Verify receiver identity / CNIC", href: "/gate-entry/driver-identity-register", module: "M13" },
       { ref: "03", label: "Verify authority letter", href: "/gate-entry/authority-letter-digitisation", module: "M13", note: "Scan point 2 of 2." },
       { ref: "04", label: "Generate gate pass", href: "/dispatch/gate-pass", module: "M13", note: "43-column gate pass." },
@@ -799,6 +904,7 @@ export const FLOWS: FlowDef[] = [
       { ref: "A6", label: "Recovery action performed by CUSTOMS, on the airline's §A5 instruction", href: "/exceptions/mishandled", module: "M17", decision: true, note: "A14 — the label was “Recovery Action by Custom” with three unlabelled exits and an actor contradicting §A5. Airline instructs; Customs acts. Each of the three recovery options carries its own field set and its own labelled exit." },
       { ref: "A7–A8", label: "Re-tender, close as forwarded", href: "/exceptions/mishandled", module: "M17" },
       { ref: "B1–B3", label: "Cannot clear → re-export hold → request raised", href: "/exceptions/re-export", module: "M16" },
+      { ref: "B3a", label: "CHA raises and tracks the re-export case — reason, stage, permission document, customs decision, final disposition", href: "/cha/re-export-long-stay", module: "M16", note: "§B1–B3 says the request is raised and never says on whose screen; this is it. Its permission upload is §B4–B6's permission. Its second tab is Long-Stay / Section 82 — the notified-party side of §C3–C4 — so this one console serves both branches and is not drawn twice." },
       { ref: "B4–B6", label: "Re-export SD (PSW), permission, charges settled", href: "/exceptions/re-export", module: "M16", note: "PSW-primary — no WeBOC path on this branch" },
       { ref: "B7–B8", label: "Re-tender as export, close import AWB", href: "/exceptions/re-export", module: "M16", note: "Blocked until §B6 settles — the lien depends on the order" },
       { ref: "C1–C2", label: "Not cleared after period → long-stay alert", href: "/exceptions/long-stay", module: "M18", note: "Alert is auto-fired by the FC-07 dwell clock" },
@@ -888,7 +994,13 @@ export const FLOWS: FlowDef[] = [
       { lane: "Integration gateways", ref: "08", label: "Customs gateway — PSW primary / WeBOC parallel-run", href: "/customs/gateway", module: "M09", note: "BLK-04 — divergence between the two blocks settlement." },
       { lane: "Integration gateways", ref: "09", label: "SITA / IATA Cargo-IMP gateway — 13 message types", href: "/messaging/iata", module: "M07", note: "Thirteen consignment message types. The ULD track (UCM / SCM / LUC) is a sibling gateway on the same spine — FC-16 / M24 — not one of these thirteen." },
       { lane: "Integration gateways", ref: "10", label: "RFID / scanner estate", href: "/rfid-integration", module: "M05" },
-      { lane: "Integration gateways", ref: "11", label: "Payment gateway & ERP bridge", href: "/finance-manager/erp-bridge-mapping", module: "M25", note: "The ERP bridge had no owning flow; FC-17 picks it up and M25 owns it." },
+      /*
+       * §11 named two gateways and hrefed at one. The payment gateway is a
+       * separate external system with its own screen, so it becomes §11-P and
+       * §11 narrows to the ERP bridge it actually points at.
+       */
+      { lane: "Integration gateways", ref: "11-P", label: "Payment gateway — providers, webhook capture, invoice matching, settlement, refunds", href: "/finance-manager/payment-gateway-reconciliation", module: "M11", note: "Six providers — HBL, Meezan, NIFT, Easypaisa, JazzCash, 1LINK. FC-07 §13a is the reconciliation this gateway feeds." },
+      { lane: "Integration gateways", ref: "11", label: "ERP bridge", href: "/finance-manager/erp-bridge-mapping", module: "M25", note: "The ERP bridge had no owning flow; FC-17 picks it up and M25 owns it. The payment gateway it used to share this node with is §11-P." },
       { lane: "Integration gateways", ref: "12", label: "Integration health board — every gateway, last sync, failures", href: "/integration-status", module: "M20" },
       { lane: "Integration gateways", ref: "13", label: "Admin integration configuration", href: "/admin/integrations", module: "M20" },
 
@@ -896,6 +1008,13 @@ export const FLOWS: FlowDef[] = [
       { lane: "Audit & reporting", ref: "15", label: "Session & event log", href: "/admin/event-log", module: "M20" },
       { lane: "Audit & reporting", ref: "16", label: "Cargo trace", href: "/auditor/cargo-trace", module: "M20" },
       { lane: "Audit & reporting", ref: "17", label: "Financial trace", href: "/auditor/financial-trace", module: "M19" },
+      /*
+       * §17a sits below §06, §16 and §17 because it bundles their outputs: the
+       * pack's contents are the RBAC snapshot, the cargo timeline and the
+       * financial timeline. It generates and exports; it is not a fourth view
+       * of the traces above it.
+       */
+      { lane: "Audit & reporting", ref: "17a", label: "Audit evidence pack generated and exported — cargo timeline, financial timeline, RBAC snapshot, evidence, event logs", href: "/auditor/export-centre", module: "M20" },
       { lane: "Audit & reporting", ref: "18", label: "Reports & dashboards", href: "/reports", module: "M19" },
       { lane: "Audit & reporting", ref: "19", label: "Module map — 26 modules against FC-01…FC-18", href: "/modules", module: "M19" },
     ],

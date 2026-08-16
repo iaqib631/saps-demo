@@ -3,10 +3,16 @@
 /**
  * P9-2 / P9-3 · Export acceptance, weighment, screening & chain of custody.
  *
- * CMTS gives `CARGOACCEPTANCE` (31) and `ACCEPTENCEDETAIL` (10) — and stops.
- * It has LOADEDWEIGHT / UNLOADEDWEIGHT / LEASHINGWEIGHT / PALLETWEIGHT but
- * nothing saying where the numbers came from, and **no field anywhere** for
- * screening, seals or custody.
+ * CMTS gives `CARGOACCEPTANCE` (31), `ACCEPTENCEDETAIL` (10) and
+ * `CARGOACCEPTANCEHWB` (7) — and stops. It has LOADEDWEIGHT / UNLOADEDWEIGHT /
+ * LEASHINGWEIGHT / PALLETWEIGHT but nothing saying where the numbers came
+ * from, and **no field anywhere** for screening, seals or custody.
+ *
+ * All three legacy tables are now *rendered* and not merely named: the header
+ * in the capture cards, the item lines and house rows in
+ * `AcceptanceDetailTables`. The consignment carried typed `lines` and `hwb`
+ * from the start while this screen read neither — a table a screen claims but
+ * never shows is how a column goes missing at migration unnoticed.
  *
  * Two amendments do the work here:
  *
@@ -48,6 +54,7 @@ import ExportCrossStageStrip from "@/components/export/ExportCrossStageStrip";
 import AcceptanceCaptureCards, {
   AcceptanceOtherColumns,
 } from "@/components/export/acceptance/AcceptanceCaptureCards";
+import AcceptanceDetailTables from "@/components/export/acceptance/AcceptanceDetailTables";
 import { AuditStrip, FormField, FormCompletenessGate } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
@@ -224,7 +231,7 @@ export default function ExportAcceptancePage() {
               FC-11 §E02–E06
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
-              CARGOACCEPTANCE 31 · ACCEPTENCEDETAIL 10
+              CARGOACCEPTANCE 31 · ACCEPTENCEDETAIL 10 · CARGOACCEPTANCEHWB 7
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F5F3FF] text-[#7C3AED] text-[10px] font-bold inline-flex items-center font-mono">
               GREENFIELD
@@ -545,6 +552,23 @@ export default function ExportAcceptancePage() {
                       </p>
                     </div>
                   </div>
+
+                  {/*
+                   * The other two tables of the trio. The badge on this page
+                   * has always claimed ACCEPTENCEDETAIL and the consignment has
+                   * always carried the typed rows; nothing read them, so the
+                   * per-line goods, pieces, weight and dimensions — and the
+                   * house breakdown of a consolidation — had no representation
+                   * on the export side at all. They sit after the class picker
+                   * because the clerk classifies the consignment before working
+                   * down its items, and before the residual column dump because
+                   * that dump closes the tab.
+                   */}
+                  <AcceptanceDetailTables
+                    lines={c.lines}
+                    hwb={c.hwb}
+                    acceptance={c.acceptance}
+                  />
 
                   <AcceptanceOtherColumns acceptance={c.acceptance} />
                 </>

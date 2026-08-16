@@ -236,7 +236,13 @@ export const UPWARD_REFERENCES: { from: string; to: string; why: string }[] = [
  *   Planning            forecast → capacity → slots → roster.
  *   Supervision         watch the floor, measure it, escalate, hand over.
  *   Administration      the write side of configuration and RBAC.
- *   Audit & Oversight   read-only, and last: nothing flows out of it.
+ *   Integrations        the gateway estate. Placed directly below Administration
+ *                       because FC-12's lanes run Sites & HQ → Access & RBAC →
+ *                       Integration gateways → Audit & reporting, and because
+ *                       FC-17 §12 integration-status feeds §13 financial trace.
+ *   Audit & Oversight   read-only: nothing flows out of it.
+ *   Architecture & Flows FC-12 §19 /modules, the last node in that flow.
+ *   Access & Session    the auth states, outside the app shell entirely.
  * ===========================================================================*/
 
 /**
@@ -283,12 +289,19 @@ const RAIL: NavBlock[] = [
       { label: "AWB Summary Sheet", href: "/import/summary" }, //                    §06
       { label: "Manifest & IGM Reconciliation", href: "/import/manifest" }, //       §07–08
       { label: "AWB Indexing — M03", href: "/import/indexing" }, //                  §09
-      { label: "Document Repository — M02", href: "/import/documents" }, //          FC-02 §02
       // Consolidation before acceptance. The old rail had these the other way
       // round, contradicting FC-01, which splits the house bills (§11–12) and only
       // then accepts and weighs them (§13–14).
       { label: "Consolidation & Split", href: "/import/consolidation" }, //          §11–12
       { label: "Cargo Acceptance & Weighing — M04", href: "/import/acceptance" }, // §13–14
+      // Last, and deliberately outside the numbered run. Everything above is a
+      // strict FC-01 spine (§01–04 · 05 · 06 · 07–08 · 09 · 11–12 · 13–14); the
+      // repository carries no § of its own because it is the cross-cutting M02
+      // store, and every flow that reaches it — FC-04 §03a evidence packs, FC-05
+      // §05 missing-document alerts, FC-06 §02 CHA collection — arrives after the
+      // spine has run. Wedged at position 6 it broke the rail's one continuous
+      // numbered sequence.
+      { label: "Document Repository — M02", href: "/import/documents" }, //          FC-04 §03a / FC-05 §05 / FC-06 §02
     ],
   },
   {
@@ -297,10 +310,18 @@ const RAIL: NavBlock[] = [
     icon: Boxes,
     href: "/storage/master",
     subItems: [
-      { label: "Cargo & Location Master", href: "/storage/master" }, //              FC-03 §01
-      { label: "Allocation Engine", href: "/storage/allocation" }, //                §15–16
-      { label: "Logical vs Physical", href: "/storage/locations" }, //               FC-03 §04
+      // The two reference screens first, together. Neither `/storage/master` nor
+      // `/storage/locations` is touched by any flow step — they are the location
+      // model you configure before allocating against it — and splitting them
+      // around the operational pair is what made this block read as scrambled.
+      { label: "Cargo & Location Master", href: "/storage/master" }, //              FC-03 §01 (reference)
+      { label: "Logical vs Physical", href: "/storage/locations" }, //               FC-03 §04 (reference)
+      // Tag binding above allocation. FC-01 tags pieces at §10, five steps before
+      // storage allocation at §15–16: a piece carries its tag out of indexing and
+      // only later acquires a location. The screen is re-entered for the
+      // tag → location write-back (FC-03 §05, FC-15 §08a), but first entry governs.
       { label: "Tag Binding (RFID)", href: "/storage/rfid-binding" }, //             §10 / FC-03 §05
+      { label: "Allocation Engine", href: "/storage/allocation" }, //                §15–16
       { label: "Bonded Area", href: "/storage/bonded" }, //                          FC-09 §04
     ],
   },
@@ -325,11 +346,15 @@ const RAIL: NavBlock[] = [
     href: "/lifter-operator",
     subItems: [
       { label: "Lifter Home", href: "/lifter-operator" }, //                          §00
-      { label: "My Tasks", href: "/lifter-operator/tasks" }, //                       §01
-      { label: "Task Detail", href: "/lifter-operator/task-detail" }, //              §02
-      { label: "RFID Scan", href: "/lifter-operator/rfid-scan" }, //                  §03 / FC-03 §05
-      { label: "Movement Log", href: "/lifter-operator/movement-log" }, //            §04
-      { label: "Lifter Status", href: "/lifter-operator/lifter-status" }, //          §05
+      // Lifter Status was LAST and is FC-15 §01–02b. It is where the operator signs
+      // on to a named asset and where fit-for-duty is decided — battery above the
+      // 30% threshold, no Out-of-service fault — and the queue will not dispatch to
+      // an unfit asset. It gates every screen below it, so it cannot sit beneath them.
+      { label: "Lifter Status", href: "/lifter-operator/lifter-status" }, //          §01–02b
+      { label: "My Tasks", href: "/lifter-operator/tasks" }, //                       §03
+      { label: "Task Detail", href: "/lifter-operator/task-detail" }, //              §04 / §06–09
+      { label: "RFID Scan", href: "/lifter-operator/rfid-scan" }, //                  §05 / FC-03 §05
+      { label: "Movement Log", href: "/lifter-operator/movement-log" }, //            §10–11
     ],
   },
   {
@@ -339,12 +364,16 @@ const RAIL: NavBlock[] = [
     href: "/messaging/iata",
     subItems: [
       { label: "IATA Cargo-IMP — M07", href: "/messaging/iata" }, //                 §17
+      // NOA directly beneath the IMP console, not at the foot of the block. The
+      // previous note here had it backwards: it argued the NOA must sit below the
+      // notification engine because the engine links onward to it, but FC-05 runs
+      // §03 NOA issued long before §16–17 channel/template resolved and dispatched.
+      // The engine is that flow's TAIL — the NOA is issued and the engine then
+      // dispatches it — and FC-01 makes the pairing explicit: §17 IATA messaging,
+      // then §18 Notice of Arrival, spine-adjacent.
+      { label: "Arrival Advice / NOA", href: "/import/arrival-advice" }, //          §18 / FC-05 §03 / FC-06 §01
       { label: "Customs Messaging Console", href: "/messaging/customs" }, //         FC-05
-      { label: "Notification Engine — M08", href: "/messaging/notifications" }, //   FC-05
-      // Moved out of the Import Documentation block. The notification engine links
-      // onward to the NOA, and FC-01 agrees — §17 messaging, then §18 notice of
-      // arrival — so the NOA has to sit below the messaging screens, not above them.
-      { label: "Arrival Advice / NOA", href: "/import/arrival-advice" }, //          §18 / FC-06 §01
+      { label: "Notification Engine — M08", href: "/messaging/notifications" }, //   FC-05 §16–17
     ],
   },
   {
@@ -402,13 +431,33 @@ const RAIL: NavBlock[] = [
     icon: Wallet,
     href: "/billing/invoice",
     subItems: [
+      // Straight FC-07, and the § annotations now read monotonically down the block:
+      //   §09 invoice → §10–12 waiver → §13 payment → §14 five-condition AND gate →
+      //   §15 G.Rent voucher (FC-07 ENDS here) → FC-01 §22b DO issued.
+      //
+      // Generation stays above the lifecycle screen: `/finance-manager/invoice-generation`
+      // works UNBILLED cargo (source card, line items, billing validation, Generate)
+      // while `/billing/invoice` works the ISSUED invoice — draft/issued/part-paid/
+      // paid/overdue/credited, the waiver chain, the payment queue. Same §09 event,
+      // two hrefs across two flows (FC-17 §05 cites "FC-07 §09" by name), not an
+      // inversion.
       { label: "Invoice Generation", href: "/finance-manager/invoice-generation" }, //   §09
       { label: "Invoice, Payment & Waiver", href: "/billing/invoice" }, //               §09–13
       { label: "Waiver Approval Workflow", href: "/finance-manager/waiver-workflow" }, // §10–12
-      { label: "Godown Rent Voucher — M11", href: "/billing/godown-rent" }, //           §14
-      { label: "Payment Reconciliation (bank)", href: "/finance-manager/payment-reconciliation" }, // §13
+      // The two reconciliation screens ARE §13 — FC-17 §06 annotates
+      // `/finance-manager/payment-reconciliation` as "Payment received and reconciled
+      // (FC-07 §13)" — so they sit above the §14 gate and the §15 voucher, not below
+      // the DO. They also remain above `erp-bridge-mapping`, which consumes them
+      // (FC-17 §06 reconciled → §07 journal assembled → §08 push → §10 write-back).
+      { label: "Payment Reconciliation (bank)", href: "/finance-manager/payment-reconciliation" }, // §13 / FC-17 §06
       { label: "Payment Gateway Reconciliation", href: "/finance-manager/payment-gateway-reconciliation" }, // §13
-      { label: "Delivery Order & Release — M12", href: "/billing/delivery-order" }, //   §15
+      // Voucher then DO, contiguous and in that order. FC-07 §15 is explicitly the
+      // end of the flow and its handoff note says the DO is issued after the voucher,
+      // on the FC-01 spine (§21a voucher, §22b DO). The DO was below the two
+      // reconciliation screens, which put the release ahead of nothing and behind
+      // downstream bookkeeping.
+      { label: "Godown Rent Voucher — M11", href: "/billing/godown-rent" }, //           §14–15 / FC-01 §21a
+      { label: "Delivery Order & Release — M12", href: "/billing/delivery-order" }, //   FC-01 §22b (FC-07 handoff)
       { label: "ERP Bridge Mapping", href: "/finance-manager/erp-bridge-mapping" }, //   FC-17 §01
     ],
   },
@@ -485,12 +534,19 @@ const RAIL: NavBlock[] = [
     icon: Gauge,
     href: "/operations-supervisor",
     subItems: [
+      // FC-14 owns this block and reads §01 handover → §02–04 live ops → §05–08
+      // escalation → §09–10 floor notes → §11 performance → §12–13 handover submitted.
+      // Performance Console sat at position 3: a shift-END measurement screen above
+      // the escalation routing and floor notes that generate what it measures.
+      // Shift Handover bookends the flow (§01 and §12–13) and takes the tail slot
+      // because it is the shift's closing artifact — FC-14 §12 carries the counters
+      // into it, FC-15 §14 the equipment status, FC-13 §10 the roster shortfall.
       { label: "Supervision Home", href: "/operations-supervisor" }, //               §00
-      { label: "Live Ops View", href: "/operations-supervisor/live-ops-view" }, //     §01
-      { label: "Performance Console", href: "/operations-supervisor/performance-console" }, // §02
-      { label: "Escalation Inbox", href: "/operations-supervisor/escalation-inbox" }, // §03
-      { label: "Shift Handover", href: "/operations-supervisor/shift-handover" }, //   §04
-      { label: "MoM / Floor Notes", href: "/operations-supervisor/mom-floor-notes" }, // §05
+      { label: "Live Ops View", href: "/operations-supervisor/live-ops-view" }, //     §02–04
+      { label: "Escalation Inbox", href: "/operations-supervisor/escalation-inbox" }, // §05–08
+      { label: "MoM / Floor Notes", href: "/operations-supervisor/mom-floor-notes" }, // §09–10
+      { label: "Performance Console", href: "/operations-supervisor/performance-console" }, // §11
+      { label: "Shift Handover", href: "/operations-supervisor/shift-handover" }, //   §01 / §12–13
     ],
   },
   {
@@ -544,14 +600,53 @@ const RAIL: NavBlock[] = [
     icon: UserCog,
     href: "/admin",
     subItems: [
-      { label: "Admin Dashboard", href: "/admin" }, //                                §T3-01
-      { label: "Users", href: "/admin/users" }, //                                    §T3-02
-      { label: "Roles & Permissions", href: "/admin/roles" }, //                      §T3-03
-      { label: "Master Data Editor", href: "/admin/master-data" }, //                 §T3-04
-      { label: "Integration Console", href: "/admin/integrations" }, //               §T3-05
-      { label: "System Settings", href: "/admin/settings" }, //                       §T3-06
-      { label: "Audit Trail Browser", href: "/admin/audit-trail" }, //                §M20-01
-      { label: "Session & Event Log", href: "/admin/event-log" }, //                  §M20-02
+      // Re-annotated against FC-12, which actually numbers these screens. The old
+      // §T3-NN / §M20-NN tokens were positional labels invented for the previous
+      // order, so they would have scrambled the moment anything moved.
+      { label: "Admin Dashboard", href: "/admin" }, //                                section home
+      // System Settings up from position 6. It is the tenant/installation config —
+      // company identity and tax registration (NTN / STRN / GST), branding, timezone,
+      // currency, date format, weight and dimension units. Every document the system
+      // renders (invoice, godown rent voucher, DO) prints against those values and
+      // every other admin screen is scoped by them. FC-12 §01 makes it the platform's
+      // first node.
+      { label: "System Settings", href: "/admin/settings" }, //                       FC-12 §01
+      // Roles before Users: you cannot assign a role that does not exist. This is a
+      // dependency, not merely a flow ordering, and FC-12 agrees (§04 portal
+      // separation → §05 user & role administration).
+      { label: "Roles & Permissions", href: "/admin/roles" }, //                      FC-12 §04
+      { label: "Users", href: "/admin/users" }, //                                    FC-12 §05
+      { label: "Master Data Editor", href: "/admin/master-data" }, //                 FC-12 §07
+      { label: "Integration Console", href: "/admin/integrations" }, //               FC-12 §13
+      { label: "Audit Trail Browser", href: "/admin/audit-trail" }, //                FC-12 §14
+      { label: "Session & Event Log", href: "/admin/event-log" }, //                  FC-12 §15
+    ],
+  },
+  {
+    // Up from fourth in this portal. Two flow edges were inverted by the old slot:
+    // FC-17 §12 `/integration-status` → §13 `/auditor/financial-trace` put the
+    // successor above its predecessor, and FC-12's own lane order is Sites & HQ →
+    // Access & RBAC → Integration gateways → Audit & reporting, which maps exactly
+    // to Administration → Integrations → Audit & Oversight → Architecture & Flows
+    // (`/modules` is FC-12 §19, the flow's last step, after `/reports` §18).
+    //
+    // One residual inversion is unfixable and is deliberately not chased: FC-12 §12
+    // `/integration-status` → §13 `/admin/integrations` wants Integrations ABOVE
+    // Administration, while §01 `/admin/settings` and §04–07 want the opposite.
+    // `/integration-status` appears twice in FC-12 (§02 HQ sync board, §12 gateway
+    // health board), so no linear order satisfies both. This move neither creates
+    // nor cures it.
+    portal: "superadmin",
+    label: "Integrations",
+    icon: Plug,
+    href: "/integration-status",
+    subItems: [
+      { label: "Integration Status", href: "/integration-status" }, //               FC-12 §02 / §12
+      { label: "RFID Integration", href: "/rfid-integration" }, //                    FC-12 §10
+      // Build-QA surface rather than a client-facing screen. It is listed rather
+      // than hidden because the audit rule for this rail is that every route under
+      // app/ appears in exactly one portal — an unlisted route is an unowned route.
+      { label: "QA Checklist (internal)", href: "/qa-checklist" },
     ],
   },
   {
@@ -576,20 +671,6 @@ const RAIL: NavBlock[] = [
     subItems: [
       { label: "Module Map", href: "/modules" },
       { label: "Flow Walkthroughs", href: "/flows/FC-01", matchPrefix: "/flows" },
-    ],
-  },
-  {
-    portal: "superadmin",
-    label: "Integrations",
-    icon: Plug,
-    href: "/integration-status",
-    subItems: [
-      { label: "Integration Status", href: "/integration-status" },
-      { label: "RFID Integration", href: "/rfid-integration" },
-      // Build-QA surface rather than a client-facing screen. It is listed rather
-      // than hidden because the audit rule for this rail is that every route under
-      // app/ appears in exactly one portal — an unlisted route is an unowned route.
-      { label: "QA Checklist (internal)", href: "/qa-checklist" },
     ],
   },
   {

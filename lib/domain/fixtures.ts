@@ -870,6 +870,26 @@ export const GODOWN_RENTS: GodownRent[] = CHARGED_AWBS.map(
     const doDaysAgo = a.DODATE ? daysBetween(a.DODATE, DEMO_NOW) : null;
     const grDaysAgo = doDaysAgo !== null ? Math.max(0, doDaysAgo - 1) : Math.max(0, totalDays - 2);
 
+    /**
+     * The waiver is computed ONCE here and every downstream amount derives from
+     * it, because it previously did not.
+     *
+     * `NETPAYABLE` was seeded as `calc.total` — identical to `TOTALAMOUNT` — so
+     * the one voucher carrying a waiver (i === 1: a 20% storage waiver of
+     * PKR 12,518.90 against a PKR 62,594.50 total) still billed the consignee
+     * the full amount. An approved waiver that reduces nothing is worse than no
+     * waiver on the screen at all: the reason, the percentage and the amount all
+     * render, so it reads as applied.
+     *
+     * The same bug reached `CASHAMOUNT` and `PAYORDERAMOUNT`, which also read
+     * `calc.total` — a waived voucher recorded a payment for more than it was
+     * owed. Deriving all four from `netPayable` is what stops the four numbers
+     * disagreeing again.
+     */
+    const waived = i === 1;
+    const waiveOffAmount = waived ? round2(calc.total * 0.2) : 0;
+    const netPayable = round2(calc.total - waiveOffAmount);
+
     return {
       ...audit(grDaysAgo, "finance.officer"),
       ...siteKeys(a.site),
@@ -911,7 +931,7 @@ export const GODOWN_RENTS: GodownRent[] = CHARGED_AWBS.map(
       MISCELLANEOUS: calc.miscellaneousCharges,
       SPECIALHANDLING: calc.specialHandlingCharges,
       TOTALAMOUNT: calc.total,
-      NETPAYABLE: calc.total,
+      NETPAYABLE: netPayable,
 
       sumTotalAmountWithoutTax: calc.subTotal,
       sumLocationChargesAmount: calc.locationChargesAmount,
@@ -921,21 +941,21 @@ export const GODOWN_RENTS: GodownRent[] = CHARGED_AWBS.map(
       sumMinimumCharges: calc.minimumCharges,
       sumTax: calc.taxAmount,
 
-      WAIVEOFF: i === 1,
-      WAIVEOFFPERCENT: i === 1 ? 20 : 0,
-      WAIVEOFFAMOUNT: i === 1 ? round2(calc.total * 0.2) : 0,
+      WAIVEOFF: waived,
+      WAIVEOFFPERCENT: waived ? 20 : 0,
+      WAIVEOFFAMOUNT: waiveOffAmount,
       WAIVEOFFREASON: i === 1 ? "Customs hold — clearance delayed beyond consignee control" : null,
       WaivOfStorageOrAmount: i === 1 ? "STORAGE" : null,
 
       PAID: paid,
       CASH: paid && i % 3 === 0,
-      CASHAMOUNT: paid && i % 3 === 0 ? calc.total : 0,
+      CASHAMOUNT: paid && i % 3 === 0 ? netPayable : 0,
       PAYORDERNO: paid && i % 3 === 1 ? `PO-${String(88200 + i)}` : null,
       // Clamped to the voucher's own day so payment can never predate the
       // voucher it settles. On a same-day consignment `grDaysAgo` is 0 and a
       // flat "yesterday" would have stamped the payment before the GR existed.
       PAYORDERDATE: paid && i % 3 === 1 ? daysAgo(Math.min(1, grDaysAgo), 12, 0) : null,
-      PAYORDERAMOUNT: paid && i % 3 === 1 ? calc.total : 0,
+      PAYORDERAMOUNT: paid && i % 3 === 1 ? netPayable : 0,
       PayOrder: paid && i % 3 === 1,
       Paymode: paid ? (i % 3 === 0 ? "CASH" : i % 3 === 1 ? "PAYORDER" : "GATEWAY") : null,
       CREDITCARD: null,
