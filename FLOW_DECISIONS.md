@@ -16,7 +16,7 @@ and the flowchart is the thing that gets amended.
 |---|---|---|---|
 | **9** | Does OOC scanner verification gate release, or is the direct `07 → 08` path allowed? | **It gates.** | The `07 OOC issued → 08 Cargo eligible for release` bypass is **deleted**. Release requires OOC captured by scanner **and** field-verified against the Single Declaration. A sixth condition joins the release gate. |
 | **10** | When does the storage clock start? | **At cargo intake.** A grace period follows during which nothing is charged; the system then computes a chargeable period. | `Arrival recorded → clock starts → free/grace period applied → chargeable period = dwell − free`. Resolves the FC-02 ↔ FC-07 contradiction **in FC-02's favour**: clock first, free period applied against it. FC-07 §02/§03 get reordered. |
-| **11** | Is the DO one step or two? | *Deferred to us* — see §2. | Split into 22a and 22b. |
+| **11** | Is the DO one step or two? | *Deferred to us* — see §2. | Split in two. Today they are **§22 DO issued** and **§22a DO collected** — see §2.1, which records the two later corrections to the halves' order and their numbering. |
 | **12** | Piece-count mismatch, unavailable cargo, damage at handover? | **A CDR is created.** | All three FC-08 dead ends now route into FC-04. Three new failure paths. |
 | **13** | What were FC-08 steps 02, 05 and 11? | **Mis-numbering on our side** — no steps are missing. | FC-08 renumbers `01…16`, no gaps. Nothing to recover. |
 | **14** | FC-11 terminal order — accept → screen → customs, or customs first? | **Customs comes first.** | The drawn **connector order is correct**; the *step numbers* are what's wrong. FC-11 gets renumbered to follow its connectors, not rewired. |
@@ -33,16 +33,38 @@ FC-01 numbers the DO as step 22 and places it *after* invoicing, but the connect
 `18 NOA → 22 DO → 19 Customs Clearance Tracking`. Both are right about different things, because
 node 22 is doing two jobs.
 
-**Decision — split it:**
+**Decision — split it.** As signed off, the two halves were:
 
 | Step | Actor | Trigger | Gate |
 |---|---|---|---|
-| **22a. DO requested** | CHA / consignee | On receipt of the NOA | none — it is an application |
-| **22b. DO issued** | Terminal (M12) | After payment received | the five-condition release gate, now six with OOC-verified |
+| ~~**22a. DO requested**~~ | CHA / consignee | On receipt of the NOA | none — it is an application |
+| ~~**22b. DO issued**~~ | Terminal (M12) | After payment received | the five-condition release gate, now six with OOC-verified |
 
-This is the only reading under which the drawn edges and the numbering are both correct, and it is
-already what the code implements — `evaluateReleaseGate()` in `lib/domain/finance.ts` gates issuance,
-while `/cha/do-collection` is where the request originates.
+`evaluateReleaseGate()` in `lib/domain/finance.ts` gates the issuing half, and that has not changed.
+The **request** half has: it was written against `/cha/do-collection`, on the reading that the CHA
+raises the DO application off the NOA, and that reading is retired. That screen is a collection
+queue — its first state is “DO Ready”, an already-issued DO awaiting a driver, and it runs
+DO Ready → Driver Assigned → Vehicle Assigned → Scheduled → Collected. Nothing on it raises a
+request. So the half is a **collection**, and a collection cannot precede the issuance it collects;
+FC-02 §33 and FC-08 §01 both put the same act after the DO exists. The two halves swapped order.
+
+**The halves as they stand:**
+
+| Step | Actor | Trigger | Gate |
+|---|---|---|---|
+| **22. DO issued** | Terminal (M12) | After payment received | the five-condition release gate, now six with OOC-verified |
+| **22a. DO collected** | CHA / consignee | Once the DO is issued | none — driver and vehicle are assigned against the issued DO |
+
+**On the numbering.** The letters `a` / `b` were assigned when the request half was drawn first, and
+were not touched when the steps swapped, so FC-01 printed its badges `21a, 22b, 22a, 23` and
+descended. The order above is correct and did not move; the **letters** were the defect. The issuing
+half takes the bare parent number **§22** — old step 22 was a single node and issuance is the act on
+the FC-01 spine, performed by the terminal — and the CHA's collection stays **§22a**, a sub-step
+subordinate to it. That is the convention everywhere else in the flows: a lettered suffix hangs off
+an existing numbered parent (§14a under §14, §21a under §21, and FC-02's 06a–06d, 18a, 33a, 35a).
+Under the old pair there was no §22 at all for `22a` / `22b` to be subordinate to.
+
+**Ref `22b` is retired.** FC-01 reads `21a → 22 → 22a → 23`, ascending in array order.
 
 ### 2.2 Export documents are keyed at the counter, not OCR'd
 

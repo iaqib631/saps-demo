@@ -1399,7 +1399,7 @@ export const GATE_PASSES: GatePass[] = AWBS.filter((a) => hasReached(a.stage, "g
 );
 
 /**
- * Pick sessions — FC-08 §07–09. The RFID amendment is the point: the tag
+ * Pick sessions — FC-08 §05–08. The RFID amendment is the point: the tag
  * bound at putaway (FC-03) is read again at retrieval, so the piece count
  * verifies itself instead of being typed.
  *
@@ -1432,7 +1432,7 @@ export const PICK_SESSIONS: PickSession[] = GATE_PASSES.map((gp, gi) => {
   const scanned = lines.filter((l) => l.outcome === "retrieved").length;
   const countMatched = scanned === pieces.length;
 
-  // FC-08 §09–10: a short pick routes to FC-04, it does not just stop. The
+  // FC-08 §07–08: a short pick routes to FC-04, it does not just stop. The
   // fixture asks the domain for the verdict instead of asserting one, so a
   // seeded session cannot claim a clean pick over lines that say otherwise.
   const trigger = pickSessionCdrTrigger({ countMatched, lines });
@@ -2164,7 +2164,7 @@ export const EXCEPTION_QUEUE: ExceptionQueueRow[] = [
 ].sort((a, b) => b.ageDays - a.ageDays);
 
 /**
- * AWB closure — FC-08 §17–20. The last gate in the whole system.
+ * AWB closure — FC-08 §14–16. The last gate in the whole system.
  *
  * CMTS has `Lock`, which flips a record read-only, but nothing that says
  * *why* it was safe to flip. The checklist is that reason, and it is
@@ -2746,7 +2746,7 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
  * Transhipment (FC-09) — M15
  *
  * Coverage is deliberate. Three cases, each exercising a different way the
- * FC-09 §T10 re-tender gate can fail:
+ * FC-09 §10 re-tender gate can fail:
  *   1. clean — permit live, bond trail unbroken, onward flight confirmed
  *   2. a **lapsed permit** — cargo sat past the permit's validity
  *   3. an **inter-station handoff mid-flight**, where bond continuity is

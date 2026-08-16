@@ -509,7 +509,7 @@ const RAIL: NavBlock[] = [
     subItems: [
       // FC-07's tail, and the FC-07 events read monotonically down the block:
       //   §09 invoice → §10–12 waiver → §13 payment → §13a gateway reconciliation →
-      //   §15 G.Rent voucher (FC-07 ENDS here) → FC-01 §22b DO issued.
+      //   §15 G.Rent voucher (FC-07 ENDS here) → FC-01 §22 DO issued.
       // FC-07 §14, the five-condition AND gate, is deliberately absent: it hrefs
       // /awb/3?tab=customs, so it is drawn on the AWB hub, not in this block. The
       // godown-rent entry used to claim it as "§14–15" and it never had it.
@@ -532,11 +532,14 @@ const RAIL: NavBlock[] = [
       { label: "Payment Gateway Reconciliation", href: "/finance-manager/payment-gateway-reconciliation" }, // FC-07 §13a · FC-12 §11-P
       // Voucher then DO, contiguous and in that order. FC-07 §15 is explicitly the
       // end of the flow and its handoff note says the DO is issued after the voucher,
-      // on the FC-01 spine (§21a voucher, §22b DO). The DO was below the two
+      // on the FC-01 spine (§21a voucher, §22 DO). The DO was below the two
       // reconciliation screens, which put the release ahead of nothing and behind
       // downstream bookkeeping.
       { label: "Godown Rent Voucher — M11", href: "/billing/godown-rent" }, //           FC-07 §15 · FC-01 §21a · FC-02 §24
-      { label: "Delivery Order & Release — M12", href: "/billing/delivery-order" }, //   FC-01 §22b (FC-07 §→ handoff) · FC-05 §07
+      // FC-01 §22 was cited here as §22b. The numbering pass gave the issuance
+      // the bare parent number and left the CHA's collection at §22a below it,
+      // so this screen is §22 and /cha/do-collection is §22a. Order unchanged.
+      { label: "Delivery Order & Release — M12", href: "/billing/delivery-order" }, //   FC-01 §22 (FC-07 §→ handoff) · FC-05 §07
       { label: "ERP Bridge Mapping", href: "/finance-manager/erp-bridge-mapping" }, //   FC-17 §01–04 / §07–09b / §11 · FC-12 §11
     ],
   },

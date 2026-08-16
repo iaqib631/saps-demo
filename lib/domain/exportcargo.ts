@@ -426,7 +426,7 @@ export interface RampCondition {
 }
 
 /**
- * FC-11 §E11 — cargo cannot go airside until it is screened and sealed, the
+ * FC-11 §22 — cargo cannot go airside until it is screened and sealed, the
  * custody chain is unbroken, the export declaration has cleared PSW, and the
  * build matches the load plan. Each is independently regulated; passing four
  * of five is not "nearly ready", it is not ready.
@@ -589,7 +589,7 @@ export interface ExportClearance {
 }
 
 /**
- * FC-11 — a consignment is through E05 only on a `cleared` round. An open
+ * FC-11 — a consignment is through §08 only on a `cleared` round. An open
  * `held-for-correction` round means the loop is still live, which is a
  * different thing from having failed.
  */
@@ -612,9 +612,9 @@ export function clearanceState(c: ExportClearance) {
 /* ================================================================== *
  * E07 — Classification and the special-cargo branch
  *
- * FC-11 08: "Special Cargo?" → 08a special handling verification
- * (DGR / PER / AVI / VAL) or 08b normal export storage. The branch is not
- * cosmetic: 08a is a verification with a named verifier and a document
+ * FC-11 §16: "Special cargo?" → §16a special handling verification
+ * (DGR / PER / AVI / VAL) or §16b general export storage. The branch is not
+ * cosmetic: §16a is a verification with a named verifier and a document
  * behind it, and skipping it for cargo that needed it is how a DG shipment
  * reaches a ULD unverified.
  * ================================================================== */
