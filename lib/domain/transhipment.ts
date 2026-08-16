@@ -258,7 +258,7 @@ export interface RetenderCondition {
 }
 
 /**
- * FC-09 §T10 — the cargo cannot be re-tendered until the permit is live, the
+ * FC-09 §10 — the cargo cannot be re-tendered until the permit is live, the
  * bond trail is unbroken, charges are raised, the onward flight is confirmed,
  * and any inter-station handoff has been accepted with bond continuity intact.
  */

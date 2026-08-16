@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * FC-11 §E01 · Booking from the airline / GSA — allotment vs what turned up.
+ * FC-11 §01 · Booking from the airline / GSA — allotment vs what turned up.
  *
  * The gap this closes: FC-11's start node is "01. Booking Information from
  * Airline" and the demo had no screen for it. CMTS has none either — the
@@ -10,7 +10,7 @@
  * already on the floor.
  *
  * That omission is why the flow's most expensive edge could not be
- * answered: E12 "Payload compatibility with Flight" decides on the payload
+ * answered: §23 "Payload compatibility with Flight" decides on the payload
  * available at the ULD position, and to know whether a consignment is
  * running over you need the number the airline sold in the first place.
  * This screen is where that number lives, and it shows it next to what was
@@ -80,8 +80,8 @@ export default function ExportBookingPage() {
               M16
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
-              FC-11 §E01
-            </span>
+              FC-11 §01
+</span>
             <span className="h-[18px] px-1.5 rounded bg-[#F5F3FF] text-[#7C3AED] text-[10px] font-bold inline-flex items-center font-mono">
               GREENFIELD
             </span>
@@ -139,7 +139,7 @@ export default function ExportBookingPage() {
       {rows.length === 0 ? (
         <EmptyState
           title="No export bookings at this site"
-          description="FC-11 starts at E01 — booking information received from the airline or its GSA."
+          description="FC-11 starts at §01 — booking information received from the airline or its GSA."
         />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">

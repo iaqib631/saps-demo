@@ -113,7 +113,7 @@ export interface GatePass extends DomainRecord {
 }
 
 /* ================================================================== *
- * Picking & retrieval — FC-08 §07–10
+ * Picking & retrieval — FC-08 §05–08
  * ================================================================== */
 
 export type PickOutcome = "pending" | "retrieved" | "unavailable" | "short" | "damaged";
@@ -148,7 +148,7 @@ export interface PickSession {
   countMatched: boolean;
 
   /**
-   * FC-08 §09–10 routes into FC-04.
+   * FC-08 §07–08 routes into FC-04.
    *
    * A single `cdrRef` could not state the rule: a session that owed a CDR and
    * a session that owed none were the same shape — null — so nothing could
@@ -164,7 +164,7 @@ export interface PickSession {
 }
 
 /**
- * The FC-08 §09/§10 decision, evaluated once here rather than re-derived by
+ * The FC-08 §07/§08 decision, evaluated once here rather than re-derived by
  * the pick screen, the gate-pass banner and the fixtures — three copies of a
  * rule is three chances for the screen to say "short" while the record says
  * "clean". Takes the two fields the decision actually reads, so a generator
@@ -249,7 +249,7 @@ export interface DeliveryInfo {
 }
 
 /* ================================================================== *
- * Gate-out verification — FC-08 §13 + amendment node 168:3591
+ * Gate-out verification — FC-08 §11 + amendment node 168:3591
  *
  * "Gate-out matches the tag to the gate pass + DO and auto-checks OOC,
  *  DO charges paid & no-hold (FC-07 gate)."
@@ -274,7 +274,7 @@ export interface GateOutCheck {
   newlyFailedConditions: string[];
 
   /**
-   * FC-08 §13 — condition at the physical boundary. Cargo can carry every tag
+   * FC-08 §11 — condition at the physical boundary. Cargo can carry every tag
    * on the pass and still fail here, and this is the last moment the terminal
    * can say the damage was present before handover rather than after it.
    */
@@ -349,7 +349,7 @@ export function gateOutOutcome(
 }
 
 /* ================================================================== *
- * Digital POD — FC-08 §14 + amendment node 168:3594
+ * Digital POD — FC-08 §12 + amendment node 168:3594
  *
  * The flow's five evidence items, plus geo which the amendment adds, plus the
  * condition at handover — the third of the three FC-08 routes into FC-04.
@@ -363,7 +363,7 @@ export interface ProofOfDelivery {
   capturedAt: string;
   capturedBy: string;
 
-  /** FC-08 §14 evidence items. */
+  /** FC-08 §12 evidence items. */
   receiverSignature: string | null;
   receiverName: string;
   /** CNIC scanned and OCR-matched against the DO's named receiver. */
@@ -377,7 +377,7 @@ export interface ProofOfDelivery {
   geo: { lat: number; lng: number; accuracyM: number } | null;
 
   /**
-   * FC-08 §14 — damage noticed as the consignee takes the cargo. Distinct from
+   * FC-08 §12 — damage noticed as the consignee takes the cargo. Distinct from
    * `GateOutCheck.damageFound`: that is the terminal's own inspection at the
    * boundary, this is the receiver's, and the two disagreeing is exactly the
    * dispute a POD is signed to settle.
@@ -415,7 +415,7 @@ export function podComplete(p: Omit<ProofOfDelivery, "complete">): boolean {
 }
 
 /* ================================================================== *
- * Closure — FC-08 §15–19 / FC-01 §27
+ * Closure — FC-08 §14–16 / FC-01 §27
  * ================================================================== */
 
 export interface ClosureChecklistItem {

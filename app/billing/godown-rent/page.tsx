@@ -186,8 +186,10 @@ export default function GodownRentPage() {
    * Computed here rather than inside the breakdown tab so the header can warn
    * too. The headline NETPAYABLE is the figure a reader takes away from this
    * screen, and it is reprinted from the record without being checked against
-   * the arithmetic that is supposed to produce it — so when the two disagree,
-   * the warning has to sit next to the number, not behind a tab.
+   * the arithmetic that is supposed to produce it — so when ANY identity the
+   * reconciler checks fails, the warning has to sit next to the number, not
+   * behind a tab. Which of them failed decides what the badge says; that it
+   * appears at all is decided by the same `breaks` list the tab reads.
    */
   const recon = useMemo(
     () => (g ? reconcileVoucher(g, lines, awb?.AWBId ?? null) : null),
@@ -402,25 +404,86 @@ export default function GodownRentPage() {
                       {formatPkr(g.NETPAYABLE)}
                     </p>
                     {/*
-                      The stored figure and the figure its own columns produce,
-                      shown together whenever they differ. Printing only the
-                      stored one would make an unapplied waiver invisible at
-                      exactly the point a reader takes the number away.
+                      The stored figure measured against the arithmetic that is
+                      supposed to produce it. Printing only the stored one would
+                      make a defect invisible at exactly the point a reader takes
+                      the number away.
+
+                      The gate is the reconciler's whole break list — the same
+                      condition `VoucherChargeBreakdown` opens its panel on — so
+                      the header and the tab can never disagree about whether
+                      this voucher reconciles. Gating it on the net-payable
+                      identity alone was the bug: that identity holds on every
+                      voucher here, so the badge could never fire, while the ten
+                      roll-up checks were raising a real break (GR-2026-04424's
+                      stale SUMMINIMUMCHARGES snapshot) that the header sat
+                      silently on top of.
+
+                      TWO FAULTS, TWO MESSAGES. They are not folded into one
+                      badge because they ask the reader for different things.
+                      A NETPAYABLE that contradicts its own waiver means THIS
+                      number is wrong — the consignee is billed an amount the
+                      voucher does not support — so the corrected figure belongs
+                      directly beneath it. A roll-up that disagrees with its own
+                      lines means the headline is right and the voucher cannot be
+                      reconciled against the legacy record: a migration exception,
+                      not a billing error. Reporting the second in the first's
+                      words would print a "correction" under a NETPAYABLE that
+                      needs none, and would tell a finance officer to hold a
+                      payment that is in fact correct — so the roll-up case says
+                      in as many words that the headline figure stands.
                     */}
-                    {recon && !recon.netPayableAgrees && (
-                      <div className="mt-1 flex flex-col items-end gap-0.5">
-                        <span className="h-[18px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[10px] font-bold inline-flex items-center gap-1">
-                          <AlertTriangle size={10} strokeWidth={2.5} />
-                          Does not match its own columns
-                        </span>
-                        <span className="text-[11px] text-[#64748B]">
-                          TOTALAMOUNT − WAIVEOFFAMOUNT ={" "}
-                          <span className="font-mono font-semibold text-[#0F172A]">
-                            {formatExact(recon.netPayableDerived)}
+                    {recon &&
+                      recon.breaks.length > 0 &&
+                      (!recon.netPayableAgrees ? (
+                        <div className="mt-1 flex flex-col items-end gap-0.5">
+                          <span className="h-[18px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[10px] font-bold inline-flex items-center gap-1">
+                            <AlertTriangle size={10} strokeWidth={2.5} />
+                            Does not match its own columns
                           </span>
-                        </span>
-                      </div>
-                    )}
+                          <span className="text-[11px] text-[#64748B]">
+                            TOTALAMOUNT − WAIVEOFFAMOUNT ={" "}
+                            <span className="font-mono font-semibold text-[#0F172A]">
+                              {formatExact(recon.netPayableDerived)}
+                            </span>
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="mt-1 flex flex-col items-end gap-0.5">
+                          <span className="h-[18px] px-1.5 rounded bg-[#FEF3C7] text-[#D97706] text-[10px] font-bold inline-flex items-center gap-1">
+                            <AlertTriangle size={10} strokeWidth={2.5} />
+                            {recon.breaks.length} figure
+                            {recon.breaks.length === 1 ? " does" : "s do"} not reconcile
+                          </span>
+                          {/*
+                            The single-break case names the column rather than
+                            only counting it: on this voucher the CMTS column IS
+                            the finding, and a reader who can see it here already
+                            knows the headline figure is not the one at fault.
+                          */}
+                          <span className="text-[11px] text-[#64748B] text-right max-w-[320px] leading-snug">
+                            NETPAYABLE itself checks out —{" "}
+                            {recon.breaks.length === 1 ? (
+                              <>
+                                the break is{" "}
+                                <span className="font-mono text-[#0F172A]">
+                                  {recon.breaks[0].title}
+                                </span>
+                              </>
+                            ) : (
+                              <>{recon.breaks.length} identities on this voucher do not</>
+                            )}
+                            .{" "}
+                            <button
+                              type="button"
+                              onClick={() => setTab("lines")}
+                              className="font-semibold text-[#1B4F8B] underline underline-offset-2 cursor-pointer bg-transparent border-0 p-0 text-[11px]"
+                            >
+                              See charge breakdown
+                            </button>
+                          </span>
+                        </div>
+                      ))}
                   </div>
                 </div>
 

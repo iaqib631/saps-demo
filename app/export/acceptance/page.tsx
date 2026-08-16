@@ -31,7 +31,7 @@
  * PORTAL_AND_DEDUP_PLAN.md §2.1): the named six-document checklist, the cargo
  * class the counter picks, and the `Held` screening state. That screen's
  * storage-allocation control went to `/export/warehousing` instead, because
- * FC-11 puts the put-away at E08 rather than on the acceptance form.
+ * FC-11 puts the put-away at §17 rather than on the acceptance form.
  */
 
 import { useMemo, useState } from "react";
@@ -228,8 +228,8 @@ export default function ExportAcceptancePage() {
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="h-[18px] px-1.5 rounded bg-[#EBF0F7] text-[#0B2545] text-[10px] font-bold inline-flex items-center font-mono">
-              FC-11 §E02–E06
-            </span>
+              FC-11 §02–03 · §11–14
+</span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
               CARGOACCEPTANCE 31 · ACCEPTENCEDETAIL 10 · CARGOACCEPTANCEHWB 7
             </span>
@@ -277,7 +277,7 @@ export default function ExportAcceptancePage() {
       {consignments.length === 0 ? (
         <EmptyState
           title="No export consignments at this site"
-          description="FC-11 starts at booking; acceptance is §E02 at the export counter."
+          description="FC-11 starts at booking; acceptance is §12 at the export counter."
         />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -502,7 +502,7 @@ export default function ExportAcceptancePage() {
                         </h3>
                         <p className="text-[11px] text-[#94A3B8] mt-0.5">
                           What the clerk classifies it as on presentation. It is what routes the
-                          08a / 08b branch at E07.
+                          special-cargo branch (§16a / §16b) at E07.
                         </p>
                       </div>
                     </div>

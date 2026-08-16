@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * P6-5 · AWB closure, finance reconciliation & archive — FC-08 §17–20.
+ * P6-5 · AWB closure, finance reconciliation & archive — FC-08 §14–16.
  *
  * The last gate in the system, and the one CMTS cannot defend. CMTS has
  * `Lock`, which flips a record read-only, but nothing that records *why*
@@ -50,8 +50,8 @@ export default function ClosurePage() {
               M14 · M20
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
-              FC-08 §17–20
-            </span>
+              FC-08 §14–16
+</span>
           </div>
           <h1 className="text-[24px] lg:text-[32px] font-bold text-[#0F172A] leading-tight mt-1.5">
             AWB Closure &amp; Archive
@@ -89,7 +89,7 @@ export default function ClosurePage() {
       {closures.length === 0 ? (
         <EmptyState
           title="Nothing ready to close at this site"
-          description="An AWB becomes a closure candidate once it is delivered — FC-08 §17."
+          description="An AWB becomes a closure candidate once it is delivered — FC-08 §14."
         />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
