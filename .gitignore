@@ -42,3 +42,8 @@ next-env.d.ts
 # editor
 .vscode
 .idea
+
+# Accidentally committed git internals and a stale nav dump; see CMTS_SCOPE_DECISIONS.md
+_git_stale_locks/
+rail.json
+_recon_check.mjs

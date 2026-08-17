@@ -17,8 +17,7 @@
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { ArrowUpRight, Ban, FileCheck2, PlaneTakeoff, Wallet } from "lucide-react";
+import { Ban, FileCheck2, PlaneTakeoff, Wallet } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
@@ -351,14 +350,6 @@ export default function ReExportPage() {
                       </span>
                     </div>
                   ))}
-                </div>
-                <div className="px-5 pb-5">
-                  <Link
-                    href="/flows/FC-10"
-                    className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#1B4F8B] no-underline hover:underline"
-                  >
-                    FC-10 walkthrough <ArrowUpRight size={12} />
-                  </Link>
                 </div>
               </div>
 

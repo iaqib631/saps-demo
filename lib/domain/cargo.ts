@@ -8,6 +8,7 @@
  *   `IMPORTAWBDETAIL` (32)  per-line receipt, incl. shortlanded / damage
  *   `IMPORTAWBLOCATION` (26) logical vs physical location assignment
  *   `AWBCONSOLE` (41)       house AWBs on a consolidation
+ *   `AWBConsolDetail` (13) per-house detail lines under the master
  *   `AWBSplit` (10)         split shipments
  *   `AwbDetendDetail` (7)   customs-detained sub-identity
  *   `AWBARRIVALADVICE` (15) arrival advice / NOA document
@@ -37,12 +38,49 @@ export type LifecycleStage =
   | "indexation" //        FC-01 §09     class/subclass set here
   | "tagging" //           FC-01 §10     barcode / RFID / AWB label
   | "segregation" //       FC-01 §11–12
+  /**
+   * FC-01 §13–14 — weigh / dimension / condition check.
+   *
+   * A discrepancy found here does NOT send the record back to §07–08
+   * reconciliation. It branches sideways to FC-04 by setting `BranchState`
+   * to `"cdr"` while the lifecycle stage stays where it is; §07–08 now
+   * covers manifest-vs-document findings only. Nothing here needs code —
+   * `hasReached` is deliberately monotonic and no caller moves a stage
+   * backwards — but the rule is easy to re-break by "fixing" a screen to
+   * reset the stage, so it is stated at the type.
+   */
   | "acceptance" //        FC-01 §13–14  weigh / dimension / condition
   | "stored" //            FC-01 §15–16  storage allocation + CMTS capture
   | "notified" //          FC-01 §17–18  IATA messaging + NOA
   | "customs" //           FC-01 §19     clearance tracking
   | "charged" //           FC-01 §20–21  charges + invoice
-  | "do-issued" //         FC-01 §22     delivery order
+  /**
+   * FC-01 §22 — the terminal ISSUES the DO, gated on payment plus the
+   * release conditions that `evaluateReleaseGate()` enforces. It is the
+   * spine act of the DO split and the only DO event that is a state of the
+   * AWB, so it is the only one with a stage.
+   *
+   * There is no `do-requested` stage above it any more. That stage read
+   * FC-01 §22a as "the CHA requests the DO once the NOA has gone out", and
+   * that reading is retired: §22a is now the CHA COLLECTING the DO the
+   * terminal has already issued, and a collection cannot precede the
+   * issuance it collects. The ref §22b — which numbered the issuance back
+   * when the request was drawn first — is retired outright; issuance takes
+   * the bare parent §22.
+   *
+   * Collection does not inherit the vacated stage either. This union is
+   * FC-01's steps COLLAPSED to the states a record can be in, so lettered
+   * sub-steps that are not states of the AWB have never had one: §14a and
+   * §21a have no stage here for the same reason. Both DO half-events are
+   * already modelled where they belong, on the record itself — collection
+   * as `DeliveryOrder.status = "collected"` and the pre-issuance half as
+   * `status = "requested"` (finance.ts, which states that FC-01 numbers no
+   * request step). A stage for either would be a second, contradicting
+   * source of truth: `status` is derived from the AWB reaching `gate-pass`,
+   * so an AWB parked on a `do-collected` stage would carry a DO still
+   * reading "issued".
+   */
+  | "do-issued" //         FC-01 §22     terminal issues it — payment + release gate
   | "gate-pass" //         FC-01 §23
   | "dispatched" //        FC-01 §24
   | "delivered" //         FC-01 §25–26  POD + DLV
@@ -158,6 +196,18 @@ export interface Manifest extends DomainRecord {
   MANIFESTSTATUS: string;
   POSTINGDATE: string | null;
   MANIFESTNIL: string | null;
+  /**
+   * CMTS `DFLAG` varchar(1) — a legacy single-character status flag.
+   *
+   * Its value set is UNKNOWN and stays a string rather than a union. The
+   * restored CMTS database is schema-only: all 105 tables are empty, so the
+   * column's type, length and nullability are knowable and its actual
+   * domain is not. Any enum written here — `"Y" | "N"`, `"A" | "D"` — would
+   * be a guess wearing the authority of a type, and the migration would
+   * then reject legitimate legacy rows carrying a character we invented
+   * away. Narrow this only once SAPS supplies a data-bearing extract or
+   * confirms the value set; until then the flag is carried across verbatim.
+   */
   DFLAG: string | null;
   USERID: string;
   TRNO: number | null;
@@ -280,8 +330,29 @@ export interface AWB extends DomainRecord {
   } | null;
   /** Set true when 05e variance exceeded tolerance and a CDR was raised. */
   cdrRaised: boolean;
-  /** ISO — when the storage clock started (FC-07 §01/§03). */
+  /**
+   * ISO — FLIGHT arrival, and nothing else.
+   *
+   * This field used to double as the storage-clock origin, which quietly
+   * billed the gap between the aircraft landing and the cargo actually
+   * being taken into the shed — breakdown, ramp queue and off-hours
+   * handovers can put hours or days between the two events. Storage now
+   * starts at `intakeAt`; keep this one for the flight record, the arrival
+   * advice and the CMTS `ARRIVALDATE` column.
+   */
   arrivedAt: string;
+  /**
+   * ISO — recorded cargo INTAKE, FC-07 §01. The storage clock starts here.
+   *
+   * This is the origin of the whole charging chain and the field every
+   * demurrage figure hangs off:
+   *   §01 intake recorded (this field)
+   *   §02 storage clock starts at `intakeAt`
+   *   §03 free / grace period runs from `intakeAt` — nothing is charged
+   *   §03a chargeable period = dwell − free period
+   * Dwell is therefore measured from `intakeAt`, never from `arrivedAt`.
+   */
+  intakeAt: string;
 }
 
 /** Convenience view over the four-line party blocks. */
@@ -420,7 +491,8 @@ export function isDiverged(l: AWBLocation): boolean {
 }
 
 /* ================================================================== *
- * Consolidation & split — CMTS `AWBCONSOLE` (41), `AWBSplit` (10)
+ * Consolidation & split — CMTS `AWBCONSOLE` (41), `AWBConsolDetail` (13),
+ * `AWBSplit` (10)
  * ================================================================== */
 
 export interface HouseAWB extends DomainRecord {
@@ -459,6 +531,56 @@ export interface HouseAWB extends DomainRecord {
   IsLock: boolean;
   UniqueIdentification: string;
   DetendIdentification: string | null;
+}
+
+/**
+ * Per-house detail lines under the master — CMTS `AWBConsolDetail` (13).
+ *
+ * `AWBCONSOLE` above carries the house AWB itself; this table carries the
+ * lines beneath it, and the consolidation screen names it as a source
+ * without anything typed behind it. Only the two columns below are modelled
+ * here, because only these two arrived with their names and types verified
+ * against the schema restore. The remaining eleven — including whatever
+ * column carries the link back to the parent house — were deliberately
+ * absent rather than guessed: a column name invented here would travel onto
+ * a screen as a `cmts="…"` parity marker and read as verified migration
+ * mapping when it is nothing of the kind. A wrong name is worse than a
+ * missing one.
+ *
+ * THE VERBATIM LIST HAS SINCE LANDED, so the remaining eleven can now be
+ * added without guessing. In table order:
+ *
+ *     HWBDetailID · IGMNO · AWBNO · HWBNO · HWBID · CargoClassID ·
+ *     CaegoSubClassID · LocationId · TotalPcs · GrossWeight ·
+ *     ChargeWeight · Contents · UniqueIndentification
+ *
+ * `HWBID` is the link back to the parent house the note above could not
+ * name. `CaegoSubClassID` is a third distinct CMTS misspelling on this one
+ * table — Caego, not Cargo — so it must be reproduced exactly if added.
+ * Extending the interface is left as its own change rather than folded into
+ * a naming fix, because each new column needs a fixture value and a screen
+ * that means something, not just a type.
+ */
+export interface AWBConsolDetail {
+  /** CMTS `GrossWeight` float, nullable — gross vs the chargeable weight. */
+  GrossWeight: number | null;
+  /**
+   * CMTS `UniqueIndentification` varchar(50), nullable.
+   *
+   * The misspelling is the column name. CMTS spells it INDENTIFICATION —
+   * with the extra N — on this table, while `AWBCONSOLE`, `AWBSplit` and the
+   * detend chain spell their own correlator `UniqueIdentification`. Both
+   * spellings are real and they are different columns on different tables,
+   * so "correcting" this one silently breaks the migration mapping for the
+   * table it belongs to. Keep it verbatim.
+   *
+   * The CASE was wrong here until the per-table parity audit: this table
+   * spells both of its modelled columns mixed-case, not uppercase. That is
+   * the same class of error as the retracted 41-field rename ticket — a name
+   * matched against the union of all CMTS columns rather than against the
+   * columns of the table that owns it.
+   */
+  UniqueIndentification: string | null;
 }
 
 export interface AWBSplitRecord {

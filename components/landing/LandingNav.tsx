@@ -51,7 +51,7 @@ export default function LandingNav() {
         </div>
 
         <button
-          onClick={() => router.push("/uld-message-builder/sign-in")}
+          onClick={() => router.push("/login")}
           className="h-9 px-6 rounded-full text-[13px] font-semibold text-white cursor-pointer transition-all duration-300 whitespace-nowrap hover:shadow-lg hover:scale-[1.03] active:scale-[0.97]"
           style={{ background: "linear-gradient(135deg, #7EC8E3, #5BA4C5)" }}
         >

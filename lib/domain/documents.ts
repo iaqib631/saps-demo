@@ -98,7 +98,7 @@ export interface StoredDocument {
   /** Mean confidence across extracted items, where OCR ran. */
   ocrMeanConfidence: number | null;
   site: SiteCode;
-  /** Archived as part of AWB closure (FC-08 §18). */
+  /** Archived as part of AWB closure (FC-08 §16). */
   archived: boolean;
 }
 

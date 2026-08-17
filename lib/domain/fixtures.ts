@@ -65,19 +65,24 @@ import {
   type PaymentRecord,
   type WaiverRequest,
 } from "./finance";
-import type {
-  ClosureChecklistItem,
-  ClosureState,
-  GateOutCheck,
-  GatePass,
-  PickLine,
-  PickSession,
-  ProofOfDelivery,
+import {
+  PICK_CDR_ORIGIN,
+  gateOutOutcome,
+  pickSessionCdrTrigger,
+  type ClosureChecklistItem,
+  type ClosureState,
+  type GateOutCheck,
+  type GatePass,
+  type PickLine,
+  type PickSession,
+  type ProofOfDelivery,
 } from "./dispatch";
 import {
   EXCEPTION_THRESHOLD_DAYS,
   type CDR,
   type CdrDispatch,
+  type CdrOrigin,
+  type CdrSourceRef,
   type CdrFinalAction,
   type CdrStatus,
   type DamageDetail,
@@ -93,6 +98,8 @@ import {
 import {
   RISK_CHANNEL_LABEL,
   dutyTotal,
+  oocMismatches,
+  oocVerified,
   type AgencyClearance,
   type AwbInformation,
   type CustomsClearance,
@@ -119,6 +126,7 @@ import type { DocumentSource, DocumentType, StoredDocument } from "./documents";
 import type { BondedHandover, TagBinding } from "./storage";
 import { SPECIAL_HANDLING_LABEL } from "./exportcargo";
 import type {
+  AcceptanceHwb,
   AcceptanceLine,
   CargoAcceptance,
   ClearanceRound,
@@ -171,6 +179,27 @@ function audit(createdDaysAgo: number, by = "s.khan") {
     IsActive: true,
     IsDeleted: false,
   };
+}
+
+/**
+ * Allocate a roll-up across `parts` detail lines so the lines add back to it
+ * EXACTLY, to the paisa.
+ *
+ * The obvious version — multiply by `1 / parts` and round each line — is what
+ * produces a voucher whose grid does not reach its own total. Rounding each
+ * share independently can drop or gain half a paisa per line, and because the
+ * GODOWNRENT `sum*` columns are printed directly above the GODOWNRENTDETAIL
+ * lines, that drift is visible on the page. So the first `parts - 1` lines
+ * take the rounded even share and the LAST line takes whatever is left. That
+ * is also how the allocation is done by hand, which matters when a finance
+ * officer reconciles the printed voucher against the legacy one.
+ */
+function splitExact(total: number, parts: number): number[] {
+  const whole = round2(total);
+  const each = round2(whole / parts);
+  const out = Array.from({ length: parts }, () => each);
+  out[parts - 1] = round2(whole - each * (parts - 1));
+  return out;
 }
 
 const GOODS = [
@@ -373,6 +402,18 @@ function buildAwbs(): AWB[] {
     });
 
     const arrivedAt = daysAgo(seed.arrivedDaysAgo, 7, 45);
+
+    // FC-07 §01/§02 — intake is a separate event from the flight landing, and
+    // the storage clock hangs off intake. Breakdown, the ramp queue and
+    // off-hours handovers put real hours between the two, so the seeds model
+    // the gap instead of collapsing it: most cargo is taken into the shed the
+    // same afternoon, every third consignment not until the next morning. A
+    // zero gap would hide exactly the period nothing may be charged for.
+    const intakeNextMorning = i % 3 === 2;
+    const intakeAt = intakeNextMorning
+      ? daysAgo(Math.max(0, seed.arrivedDaysAgo - 1), 9, 30)
+      : daysAgo(seed.arrivedDaysAgo, 14, 20);
+
     const reachedDo = hasReached(seed.stage, "do-issued");
 
     // FC-01 05e — declared (OCR) vs physical (received).
@@ -472,6 +513,7 @@ function buildAwbs(): AWB[] {
       intakeVariance,
       cdrRaised: seed.branch === "cdr" || (intakeVariance?.pieces.overTolerance ?? false),
       arrivedAt,
+      intakeAt,
     } satisfies AWB;
   });
 }
@@ -764,18 +806,44 @@ export const ARRIVAL_ADVICES: ArrivalAdvice[] = AWBS.filter((a) => hasReached(a.
  * Charges, godown rent, DO, invoices
  * ------------------------------------------------------------------ */
 
-export const CHARGE_CALCULATIONS = AWBS.filter((a) => hasReached(a.stage, "charged")).map((a) => {
-  const totalDays = daysBetween(a.arrivedAt, DEMO_NOW);
+/**
+ * One filtered list, shared by the calculator, the GR voucher and the GR
+ * detail lines — not three separate `.filter()` calls that happen to agree.
+ *
+ * `CHARGECALCULATER.VOUCHERNO` only means anything if the number a quote
+ * carries is the *same string* the voucher is later issued under. Three
+ * independent filters produced that by coincidence of ordering; the first
+ * seed row inserted out of order would have silently paired a calculation
+ * with a different consignment's voucher, and nothing on screen would have
+ * looked wrong. The list and the number formatter are therefore defined once.
+ */
+const CHARGED_AWBS = AWBS.filter((a) => hasReached(a.stage, "charged"));
+
+/** GR voucher number — continues the CMTS series from 4419. */
+const grVoucherNo = (i: number) => `GR-2026-${String(4420 + i).padStart(5, "0")}`;
+
+export const CHARGE_CALCULATIONS = CHARGED_AWBS.map((a, i) => {
   const dims = { lengthCm: 120, widthCm: 80, heightCm: 90, unit: "cm" };
   return calculateCharges({
     awbId: a.AWBId,
     arrivalAt: a.arrivedAt,
-    totalDays,
+    // The two endpoints, not a pre-computed day count. Handing the calculator a
+    // `totalDays` measured from flight arrival is what billed the gap between
+    // the aircraft landing and the cargo reaching the shed; the clock starts at
+    // intake, and only the calculator gets to say how long it has run.
+    intakeAt: a.intakeAt,
+    asOf: DEMO_NOW,
     cargoClassId: a.CARGOCLASSID,
     cargoSubClassId: a.cargoSubClassId,
     actualKg: a.TOTALWEIGHT,
     volumetricKg: round2((dims.lengthCm * dims.widthCm * dims.heightCm) / 6000),
     calculatedAt: DEMO_NOW,
+    // Every row here is an AWB that has already reached `charged`, so a GR
+    // voucher exists for each and the number is known. The nullable case —
+    // an uncommitted live quote with no voucher yet — is what a screen
+    // calling `calculateCharges()` interactively produces; seeding a null
+    // here instead would contradict the GODOWNRENT row sitting beside it.
+    voucherNo: grVoucherNo(i),
   });
 });
 
@@ -783,7 +851,7 @@ export function chargesFor(awbId: number) {
   return CHARGE_CALCULATIONS.find((c) => c.awbId === awbId);
 }
 
-export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage, "charged")).map(
+export const GODOWN_RENTS: GodownRent[] = CHARGED_AWBS.map(
   (a, i) => {
     const calc = chargesFor(a.AWBId)!;
     const paid = hasReached(a.stage, "do-issued");
@@ -791,20 +859,51 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
     const cls = cargoClass(a.CARGOCLASSID);
     const consigneeParty = PARTIES.find((p) => p.NAME === a.CONSIGNEE1);
 
+    // The gate pass prints IGM, AWB, DO and GR as four number+date pairs and
+    // an officer reads them top to bottom as the order the file moved in:
+    // IGMNODATE <= AWBNODATE <= DODATE <= GRDATE. The GR voucher is raised
+    // against a consignment the DO has already released, so it can never
+    // predate its own DO. Deriving the GR day FROM the DO day rather than
+    // from arrival independently is what keeps that ordering true — the
+    // previous fixed "arrival + 2" landed a day BEFORE the "arrival + 3" DO
+    // and printed a gate pass whose dates ran backwards.
+    const doDaysAgo = a.DODATE ? daysBetween(a.DODATE, DEMO_NOW) : null;
+    const grDaysAgo = doDaysAgo !== null ? Math.max(0, doDaysAgo - 1) : Math.max(0, totalDays - 2);
+
+    /**
+     * The waiver is computed ONCE here and every downstream amount derives from
+     * it, because it previously did not.
+     *
+     * `NETPAYABLE` was seeded as `calc.total` — identical to `TOTALAMOUNT` — so
+     * the one voucher carrying a waiver (i === 1: a 20% storage waiver of
+     * PKR 12,518.90 against a PKR 62,594.50 total) still billed the consignee
+     * the full amount. An approved waiver that reduces nothing is worse than no
+     * waiver on the screen at all: the reason, the percentage and the amount all
+     * render, so it reads as applied.
+     *
+     * The same bug reached `CASHAMOUNT` and `PAYORDERAMOUNT`, which also read
+     * `calc.total` — a waived voucher recorded a payment for more than it was
+     * owed. Deriving all four from `netPayable` is what stops the four numbers
+     * disagreeing again.
+     */
+    const waived = i === 1;
+    const waiveOffAmount = waived ? round2(calc.total * 0.2) : 0;
+    const netPayable = round2(calc.total - waiveOffAmount);
+
     return {
-      ...audit(Math.max(0, totalDays - 2), "finance.officer"),
+      ...audit(grDaysAgo, "finance.officer"),
       ...siteKeys(a.site),
       GodownId: i + 1,
-      VOUCHERNO: `GR-2026-${String(4420 + i).padStart(5, "0")}`,
+      VOUCHERNO: grVoucherNo(i),
       docNumber: {
         series: "GR_VOUCHER",
-        value: `GR-2026-${String(4420 + i).padStart(5, "0")}`,
+        value: grVoucherNo(i),
         sequence: 4420 + i,
         year: 2026,
         cargoClassId: a.CARGOCLASSID,
         continuesFromCmts: 4419,
       },
-      GRDATE: daysAgo(Math.max(0, totalDays - 2), 11, 30),
+      GRDATE: daysAgo(grDaysAgo, 11, 30),
       CHALLANNO: a.CHALLANNO,
       IGMNO: a.IGMNO,
       AWBNO: a.AWBNO,
@@ -832,7 +931,7 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
       MISCELLANEOUS: calc.miscellaneousCharges,
       SPECIALHANDLING: calc.specialHandlingCharges,
       TOTALAMOUNT: calc.total,
-      NETPAYABLE: calc.total,
+      NETPAYABLE: netPayable,
 
       sumTotalAmountWithoutTax: calc.subTotal,
       sumLocationChargesAmount: calc.locationChargesAmount,
@@ -842,18 +941,21 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
       sumMinimumCharges: calc.minimumCharges,
       sumTax: calc.taxAmount,
 
-      WAIVEOFF: i === 1,
-      WAIVEOFFPERCENT: i === 1 ? 20 : 0,
-      WAIVEOFFAMOUNT: i === 1 ? round2(calc.total * 0.2) : 0,
+      WAIVEOFF: waived,
+      WAIVEOFFPERCENT: waived ? 20 : 0,
+      WAIVEOFFAMOUNT: waiveOffAmount,
       WAIVEOFFREASON: i === 1 ? "Customs hold — clearance delayed beyond consignee control" : null,
       WaivOfStorageOrAmount: i === 1 ? "STORAGE" : null,
 
       PAID: paid,
       CASH: paid && i % 3 === 0,
-      CASHAMOUNT: paid && i % 3 === 0 ? calc.total : 0,
+      CASHAMOUNT: paid && i % 3 === 0 ? netPayable : 0,
       PAYORDERNO: paid && i % 3 === 1 ? `PO-${String(88200 + i)}` : null,
-      PAYORDERDATE: paid && i % 3 === 1 ? daysAgo(1, 12, 0) : null,
-      PAYORDERAMOUNT: paid && i % 3 === 1 ? calc.total : 0,
+      // Clamped to the voucher's own day so payment can never predate the
+      // voucher it settles. On a same-day consignment `grDaysAgo` is 0 and a
+      // flat "yesterday" would have stamped the payment before the GR existed.
+      PAYORDERDATE: paid && i % 3 === 1 ? daysAgo(Math.min(1, grDaysAgo), 12, 0) : null,
+      PAYORDERAMOUNT: paid && i % 3 === 1 ? netPayable : 0,
       PayOrder: paid && i % 3 === 1,
       Paymode: paid ? (i % 3 === 0 ? "CASH" : i % 3 === 1 ? "PAYORDER" : "GATEWAY") : null,
       CREDITCARD: null,
@@ -865,7 +967,7 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
       CHEQUENO: null,
       CHEQUEDATE: null,
       RECIEVEDBY: paid ? "finance.counter" : null,
-      PAYDATE: paid ? daysAgo(1, 12, 5) : null,
+      PAYDATE: paid ? daysAgo(Math.min(1, grDaysAgo), 12, 5) : null,
       OverPaidAmount: 0,
 
       DUPLICATECOUNT: i === 0 ? 1 : 0,
@@ -881,7 +983,45 @@ export const GODOWN_RENTS: GodownRent[] = AWBS.filter((a) => hasReached(a.stage,
 );
 
 export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.stage, "do-issued")).map(
-  (a, i) => ({
+  (a, i) => {
+    const gr = GODOWN_RENTS.find((g) => g.AWBNO === a.AWBNO);
+    const authLetterNo = `AL-2026-${String(1440 + i)}`;
+    const issuedAt = a.DODATE;
+
+    // The pre-issuance particulars. FC-01 numbers no request step — §22 is the
+    // terminal's issuance and §22a the CHA's collection of it — but the record
+    // still exists before it is issued, so that state is anchored to the NOA
+    // (FC-01 §18) rather than invented. ARRIVAL_ADVICES puts the notice at
+    // (dwell − 1) days at 09:00; the record is raised the same morning and the
+    // terminal issues at 10:30, which keeps advice -> record -> issue in that
+    // order for every seed, including the one-day-old AWBs where all three land
+    // on the same date.
+    const advice = ARRIVAL_ADVICES.find((ad) => ad.AWBNO === a.AWBNO) ?? null;
+    const requestedAt = daysAgo(Math.max(0, daysBetween(a.arrivedAt, DEMO_NOW) - 1), 9, 40);
+
+    // FC-01 §22 — the conditions as they read at issuance, frozen. Evaluated
+    // here rather than fetched from `releaseGateFor` for two reasons: that
+    // helper reads HOLDS, which is declared further down this file and would be
+    // in the temporal dead zone at module init; and it answers "is this cargo
+    // releasable now", which is a different question from "what was true when
+    // authority was granted". Screens must render this, not a live re-run.
+    const gate = evaluateReleaseGate(a.AWBId, {
+      oocIssued: true,
+      oocRef: `OOC-${a.site}-2026-${String(9100 + a.AWBId)}`,
+      oocVerifiedVsSd: true,
+      oocMismatchCount: 0,
+      oocVerifiedAt: daysAgo(Math.max(0, daysBetween(a.arrivedAt, DEMO_NOW) - 1), 12, 5),
+      oocVerifiedBy: "customs.liaison",
+      authorityLetterNo: authLetterNo,
+      chargesPaid: gr?.PAID ?? true,
+      outstanding: gr && !gr.PAID ? gr.NETPAYABLE : 0,
+      onHold: a.HOLDINGSTATUS,
+      holdReason: null,
+      cargoClassId: a.CARGOCLASSID,
+      specialClearanceDone: true,
+    });
+
+    return {
     ...audit(2, "do.desk"),
     ...siteKeys(a.site),
     DoId: i + 1,
@@ -897,7 +1037,22 @@ export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.
       cargoClassId: a.CARGOCLASSID,
       continuesFromCmts: 3099,
     },
-    DODATE: a.DODATE!,
+
+    // Every seeded DO is past §22 — the filter is `do-issued` — so all of them
+    // carry an issue timestamp and a gate snapshot. `collected` is the ones the
+    // CHA has since picked up at the counter (FC-01 §22a, drawn again as
+    // FC-02 §33 and FC-08 §01), which is any AWB that went on to draw a gate
+    // pass.
+    status: hasReached(a.stage, "gate-pass") ? "collected" : "issued",
+    requestedAt,
+    requestedBy: a.AGENT1 ?? a.CONSIGNEE1,
+    requestedAgainstNoaAt: advice?.ADVICEDATE ?? null,
+    issuedAt,
+    issuedBy: "do.desk",
+    gateEvaluatedAt: issuedAt,
+    gateSnapshot: gate.conditions,
+
+    DODATE: a.DODATE,
     DOTYPE: "NORMAL",
     DOCARGOCLASSID: a.CARGOCLASSID,
     AMOUNT: a.DOAMOUNT,
@@ -912,7 +1067,7 @@ export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.
     AuthAgentCNIC: "42201-7788990-1",
     AuthAgentPhone: "+92 300 2244660",
     AuthAgentEmail: "imran@skybridge.pk",
-    AuthLetterNo: `AL-2026-${String(1440 + i)}`,
+    AuthLetterNo: authLetterNo,
     AuthAgentPic: `/mock/auth-agent-${(i % 3) + 1}.jpg`,
     NTN: PARTIES.find((p) => p.NAME === a.CONSIGNEE1)?.NTN ?? null,
     STN: PARTIES.find((p) => p.NAME === a.CONSIGNEE1)?.STN ?? null,
@@ -925,7 +1080,8 @@ export const DELIVERY_ORDERS: DeliveryOrder[] = AWBS.filter((a) => hasReached(a.
     IsLock: a.Lock,
     DetendIdentification: a.DetendUniqueIdentification,
     site: a.site,
-  }),
+    } satisfies DeliveryOrder;
+  },
 );
 
 export const INVOICES: Invoice[] = GODOWN_RENTS.map((g, i) => ({
@@ -969,10 +1125,62 @@ export const GODOWN_RENT_DETAILS: GodownRentDetail[] = GODOWN_RENTS.flatMap((g, 
   // Most consignments sit in one zone; a consolidation spans two.
   const zones = awb.IsHwb ? [loc, loc + 1] : [loc];
 
+  // Every money column below is split from the header's own value rather than
+  // recomputed from the calculator. Two different reasons, both about the
+  // screen: (1) the voucher shows the `sum*` roll-up directly above the grid
+  // these lines fill, so anything that re-derives the number from a second
+  // source can disagree with it; (2) an equal `1/n` share rounded per line
+  // loses up to half a paisa per line, and a total the grid beneath it does
+  // not reach is worse than no total at all — it looks authoritative and is
+  // wrong. `splitExact` gives the residue to the last line, which is how the
+  // allocation is done on paper too.
+  const split = (total: number) => splitExact(total, zones.length);
+
+  // One deliberate exception to the paragraph above, on GR-2026-04424
+  // (gi === 4) and nowhere else: a stale MINIMUMCHARGES snapshot, so the
+  // reconciler has a roll-up it cannot reach from its own grid.
+  //
+  // The story is the archetypal CMTS migration fault. `SUMMINIMUMCHARGES` is
+  // re-derived against the live CARGOSUBCLASS row — FRO (subclass 113) now
+  // carries MINCHARGES 7,500 — while the GODOWNRENTDETAIL line still holds
+  // 5,500, the cold-chain floor as it stood on the day the voucher was raised.
+  // Header refreshed from the current rate master, detail rows frozen at
+  // capture time, nothing reconciling the two. It is seeded rather than waited
+  // for because with all eight vouchers arithmetically clean the exception path
+  // never runs, and a screen built to surface migration defects that can never
+  // surface one demonstrates nothing.
+  //
+  // Feeds `reconcileVoucher`'s "SUMMINIMUMCHARGES does not equal Σ
+  // MINIMUMCHARGES" break and, through it, the red break panel at the top of
+  // VoucherChargeBreakdown. This is the ONLY break raised across the eight
+  // vouchers, and it is the only voucher raising it.
+  //
+  // DO NOT "correct" this back to `split(g.sumMinimumCharges)`. It is safe
+  // precisely because MINIMUMCHARGES is a FLOOR and never an addend, and 5,500
+  // sits far below this voucher's 18,540 sub-total, so the floor is dormant on
+  // both figures: TOTALAMOUNT, NETPAYABLE, CASHAMOUNT, PAYORDERAMOUNT and the
+  // invoice built off them are all untouched. A broken roll-up on a dormant
+  // column is a reconciliation exception, not a billing error — which is the
+  // whole reason this column was chosen to carry it. The waiver on i === 1 is
+  // the opposite case and is NOT an anomaly: it demonstrates a waiver applied
+  // correctly and its arithmetic must stay exact.
+  const staleFloorSnapshot = gi === 4 ? 5500 : null;
+
+  const weightParts = split(g.CHARGEABLEWEIGHT);
+  const withoutTaxParts = split(g.sumTotalAmountWithoutTax);
+  const taxParts = split(g.sumTax);
+  const handlingParts = split(g.sumHandlingCharges);
+  const storageParts = split(g.sumStorgeUnitCharges);
+  const locationParts = split(g.sumLocationChargesAmount);
+  const minimumParts = split(staleFloorSnapshot ?? g.sumMinimumCharges);
+  const afuParts = split(g.sumAFUAmount);
+  const specialParts = split(g.SPECIALHANDLING);
+  const deconsolParts = split(g.DECONSOLIDATION);
+  const docParts = split(g.DOCUMENTATION);
+
   return zones.map((locationId, li) => {
-    const share = 1 / zones.length;
-    const withoutTax = round2(calc.subTotal * share);
-    const tax = round2(calc.taxAmount * share);
+    const withoutTax = withoutTaxParts[li];
+    const tax = taxParts[li];
     return {
       Id: gi * 10 + li + 1,
       GRNO: g.VOUCHERNO,
@@ -981,19 +1189,23 @@ export const GODOWN_RENT_DETAILS: GodownRentDetail[] = GODOWN_RENTS.flatMap((g, 
       LOCATIONID: locationId,
       INDEXNO: li + 1,
       DAYS: calc.chargeableDays,
-      WEIGHT: round2(calc.chargeableKg * share),
+      WEIGHT: weightParts[li],
       HandlingUnit: "PER KG",
-      HandlingCharges: round2(calc.handlingAmount * share),
+      HandlingCharges: handlingParts[li],
       StorgeUnit: "PER KG / DAY",
-      StorgeUnitCharges: round2(calc.storageAmount * share),
+      StorgeUnitCharges: storageParts[li],
       LocationUnit: "PER DAY",
-      LocationCharges: round2(calc.locationChargesAmount * share),
-      MinimumCharges: round2(calc.minimumCharges * share),
-      SpecialCharges: round2(calc.specialHandlingCharges * share),
-      Deconsolidation: round2(calc.deconsolidationCharges * share),
-      DocCharges: round2(calc.documentationCharges * share),
-      // Advance Freight Undertaking — carried per line in CMTS.
-      AFUAmount: 0,
+      LocationCharges: locationParts[li],
+      MinimumCharges: minimumParts[li],
+      SpecialCharges: specialParts[li],
+      Deconsolidation: deconsolParts[li],
+      DocCharges: docParts[li],
+      // Advance Freight Undertaking — carried per line in CMTS, and it is the
+      // AFU-classed *slice of* `SpecialCharges` above, not a charge on top of
+      // it. Non-zero only where the cargo class is AFU, which is exactly the
+      // condition under which the header sets `sumAFUAmount`. A screen that
+      // adds `SpecialCharges + AFUAmount` into a line total double-bills.
+      AFUAmount: afuParts[li],
       Freedays: calc.freeDays,
       TaxPercentage: String(calc.taxPercent),
       Tax: tax,
@@ -1092,9 +1304,32 @@ export function releaseGateFor(awbId: number) {
   if (!a) return null;
   const inv = INVOICES.find((x) => x.awbId === awbId);
   const hold = HOLDS.find((h) => h.AWBNo === a.AWBNO && !h.Release);
+
+  // Read the actual Out-of-Charge record, not the lifecycle stage.
+  //
+  // Deriving this from `hasReached(a.stage, …)` was the original defect: the
+  // stage says how far the consignment has travelled, which is not the same
+  // question as whether anybody reconciled the OOC against the declaration it
+  // discharges. A stage-derived answer cannot see a field mismatch at all, so
+  // an OOC that disagrees with its SD would have read as verified purely by
+  // having moved far enough down the flow.
+  //
+  // `oocVerified` / `oocMismatches` are the same helpers FC-06's clearance gate
+  // uses (customs.ts), so both gates now answer from one record and cannot
+  // disagree about the same AWB.
+  const clearance = clearanceFor(awbId);
+  const ooc = clearance?.ooc ?? null;
+  const oocIssued = !!ooc;
+  const verifiedVsSd = !!ooc && oocVerified(ooc);
+  const mismatches = ooc ? oocMismatches(ooc) : [];
+
   return evaluateReleaseGate(awbId, {
-    oocIssued: hasReached(a.stage, "customs") && a.branch !== "re-export",
-    oocRef: hasReached(a.stage, "customs") ? `OOC-2026-${String(9100 + awbId)}` : null,
+    oocIssued,
+    oocRef: ooc?.oocNo ?? null,
+    oocVerifiedVsSd: verifiedVsSd,
+    oocMismatchCount: mismatches.length,
+    oocVerifiedAt: ooc?.verifiedAt ?? null,
+    oocVerifiedBy: ooc?.verifiedBy ?? null,
     authorityLetterNo: hasReached(a.stage, "do-issued") ? `AL-2026-${String(1440 + awbId)}` : null,
     chargesPaid: inv?.status === "paid",
     outstanding: inv?.outstanding ?? 0,
@@ -1167,7 +1402,7 @@ export const GATE_PASSES: GatePass[] = AWBS.filter((a) => hasReached(a.stage, "g
 );
 
 /**
- * Pick sessions — FC-08 §07–09. The RFID amendment is the point: the tag
+ * Pick sessions — FC-08 §05–08. The RFID amendment is the point: the tag
  * bound at putaway (FC-03) is read again at retrieval, so the piece count
  * verifies itself instead of being typed.
  *
@@ -1198,6 +1433,13 @@ export const PICK_SESSIONS: PickSession[] = GATE_PASSES.map((gp, gi) => {
   });
 
   const scanned = lines.filter((l) => l.outcome === "retrieved").length;
+  const countMatched = scanned === pieces.length;
+
+  // FC-08 §07–08: a short pick routes to FC-04, it does not just stop. The
+  // fixture asks the domain for the verdict instead of asserting one, so a
+  // seeded session cannot claim a clean pick over lines that say otherwise.
+  const trigger = pickSessionCdrTrigger({ countMatched, lines });
+
   return {
     gatePassNo: gp.GATEPASSNO,
     awbId: awb.AWBId,
@@ -1206,9 +1448,14 @@ export const PICK_SESSIONS: PickSession[] = GATE_PASSES.map((gp, gi) => {
     lines,
     expectedPieces: pieces.length,
     scannedPieces: scanned,
-    countMatched: scanned === pieces.length,
-    // FC-08: a short pick routes to FC-04, it does not just stop.
-    cdrRef: shortOne ? "CDR-KHI-2026-00322" : null,
+    countMatched,
+    cdrRequired: trigger.required,
+    cdrReason: trigger.reason,
+    // CDRS mints this record further down the file, at sequence 323 against
+    // this same AWB — see the dispatch-origin selection there. The number is
+    // repeated rather than shared because the CDR pool is built after the pick
+    // sessions it reads; if either end moves, both move.
+    cdrRef: trigger.required ? `CDR-${awb.site}-2026-00323` : null,
   } satisfies PickSession;
 });
 
@@ -1231,29 +1478,53 @@ export const GATE_OUT_CHECKS: GateOutCheck[] = GATE_PASSES.map((gp, gi) => {
   const staleRelease = gi === 2;
   const missing = expected.filter((t) => !scanned.includes(t));
 
+  // The fourth pass is the damage route into FC-04 — every tag present and
+  // correct, release still valid, and the cargo still not fit to leave. It sits
+  // on its own pass deliberately: on top of the short pick or the stale release
+  // it would prove nothing, because the exit was already blocked.
+  const damagedPieceIds = gi === 3 ? session.lines.slice(0, 1).map((l) => l.pieceId) : [];
+  const damageFound = damagedPieceIds.length > 0;
+  const damageNote = damageFound
+    ? "Forklift strike to the pallet base found on the loaded vehicle; shrink-wrap torn."
+    : null;
+
+  const check = {
+    tagsMatched: missing.length === 0,
+    extraTags: [] as string[],
+    missingTags: missing,
+    releaseStillValid: !staleRelease,
+    newlyFailedConditions: staleRelease ? ["not-on-hold"] : [],
+    damageFound,
+    damageNote,
+    damagedPieceIds,
+  };
+
   return {
     gatePassNo: gp.GATEPASSNO,
     checkedAt: daysAgo(1, 9, 30),
     checkedBy: "gate.security",
     scannedTags: scanned,
     expectedTags: expected,
-    tagsMatched: missing.length === 0,
-    extraTags: [],
-    missingTags: missing,
-    releaseStillValid: !staleRelease,
-    newlyFailedConditions: staleRelease ? ["not-on-hold"] : [],
-    outcome: missing.length === 0 && !staleRelease ? "cleared" : "blocked",
-    blockReason: staleRelease
-      ? "A customs hold was placed after this gate pass was issued — release is no longer valid."
-      : missing.length > 0
-        ? `${missing.length} tag(s) on the gate pass were not read on the vehicle.`
-        : null,
+    ...check,
+    // Composed by the domain helper rather than restated here. The fixture used
+    // to carry its own copy of the rule, which is how a blocked exit could show
+    // one reason on screen while a second — equally blocking — went unmentioned
+    // and sent the vehicle back to the gate twice.
+    ...gateOutOutcome(check),
+    // Deliberately null on the damaged pass: this is the arm where the finding
+    // exists and the CDR does not yet, which is the state the gate actually
+    // sits in for the minutes between the inspection and the paperwork.
+    // `gateOutOutcome` already blocks the exit over it and says a CDR is
+    // required, so nothing leaves on an unraised discrepancy.
+    cdrRef: null,
   } satisfies GateOutCheck;
 });
 
 export const PODS: ProofOfDelivery[] = AWBS.filter((a) => hasReached(a.stage, "delivered")).map(
   (a, i) => {
     const gp = GATE_PASSES.find((g) => g.AWBNO === a.AWBNO)!;
+    const damageAtHandover = i === 1;
+    const handoverCdrRef = `CDR-${a.site}-2026-${String(320).padStart(5, "0")}`;
     return {
       id: i + 1,
       awbId: a.AWBId,
@@ -1270,6 +1541,16 @@ export const PODS: ProofOfDelivery[] = AWBS.filter((a) => hasReached(a.stage, "d
       photos: ["/mock/pod-1.jpg", "/mock/pod-2.jpg"],
       timestamp: daysAgo(1, 15, 12),
       geo: { lat: 24.9065, lng: 67.1608, accuracyM: 8 },
+      // The second handover is the one that went wrong at the tailgate. It is
+      // kept complete rather than left open because the CDR exists — that is
+      // the whole shape of the rule in `podComplete`: damage does not stop a
+      // POD closing, an unrecorded discrepancy does. A fixture that carried the
+      // damage without the CDR would only ever exercise the failing branch.
+      damageAtHandover: damageAtHandover,
+      damageNote: damageAtHandover
+        ? "Two cartons scuffed and one corner crushed; noted by the receiver before signing."
+        : null,
+      cdrRef: damageAtHandover ? handoverCdrRef : null,
       complete: true,
       partial: false,
       dlvSentAt: daysAgo(1, 15, 14),
@@ -1369,6 +1650,14 @@ const CDR_AWB = AWBS.find((a) => a.branch === "cdr")!;
 
 const CDR_SEED: Array<{
   type: DiscrepancyType;
+  /**
+   * Which decision raised it. Stated per row rather than inferred from `type`
+   * or `auto`, because the inference does not exist: intake and picking both
+   * raise `shortage`, and a damage CDR can come off the gate-out inspection or
+   * off the receiver's signature. Guessing here is how the workbench would end
+   * up filtering "raised at picking" and returning intake rows.
+   */
+  origin: CdrOrigin;
   status: CdrStatus;
   auto: boolean;
   /** §08 dispatch rounds; index 0 is the original send. */
@@ -1381,34 +1670,34 @@ const CDR_SEED: Array<{
   evidence: EvidenceKind[];
   detail: string;
 }> = [
-  { type: "shortage", status: "awaiting-instruction", auto: true, rounds: 3, instructionOnRound: null, finalAction: null, closed: false, customsNotified: false,
+  { type: "shortage", origin: "intake-variance", status: "awaiting-instruction", auto: true, rounds: 3, instructionOnRound: null, finalAction: null, closed: false, customsNotified: false,
     evidence: ["photo", "piece-count", "weight", "seal-condition", "package-condition", "remarks"],
     detail: "17 pieces received against 20 declared; shortage consistent with the FFM count." },
-  { type: "overage", status: "closed", auto: true, rounds: 1, instructionOnRound: 1, finalAction: "F2-adjust-pieces-weight", closed: true, customsNotified: true,
+  { type: "overage", origin: "intake-variance", status: "closed", auto: true, rounds: 1, instructionOnRound: 1, finalAction: "F2-adjust-pieces-weight", closed: true, customsNotified: true,
     evidence: ["photo", "piece-count", "weight", "remarks"],
     detail: "2 pieces over manifest; airline confirmed a mis-split at origin." },
-  { type: "damage", status: "action-selected", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F4-re-export", closed: false, customsNotified: true,
+  { type: "damage", origin: "handover-damage", status: "action-selected", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F4-re-export", closed: false, customsNotified: true,
     evidence: ["photo", "package-condition", "weight", "piece-count", "remarks"],
     detail: "Water ingress through the outer carton; consignee refused acceptance." },
-  { type: "leakage-wet", status: "on-hold", auto: false, rounds: 2, instructionOnRound: null, finalAction: null, closed: false, customsNotified: true,
+  { type: "leakage-wet", origin: "intake-variance", status: "on-hold", auto: false, rounds: 2, instructionOnRound: null, finalAction: null, closed: false, customsNotified: true,
     evidence: ["photo", "package-condition", "weight", "remarks"],
     detail: "Drum seepage detected in the bonded aisle; pallet isolated." },
-  { type: "tampering", status: "notified", auto: false, rounds: 1, instructionOnRound: null, finalAction: null, closed: false, customsNotified: true,
+  { type: "tampering", origin: "intake-variance", status: "notified", auto: false, rounds: 1, instructionOnRound: null, finalAction: null, closed: false, customsNotified: true,
     evidence: ["photo", "seal-condition", "piece-count", "remarks"],
     detail: "ULD seal number does not match the FFM; seal cut and re-applied." },
-  { type: "pilferage", status: "closed", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F5-claim-liability", closed: true, customsNotified: true,
+  { type: "pilferage", origin: "picking-count", status: "closed", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F5-claim-liability", closed: true, customsNotified: true,
     evidence: ["photo", "piece-count", "weight", "package-condition", "seal-condition", "remarks"],
     detail: "Carton opened and re-taped; 4 units missing against the packing list." },
   // Deliberately thin — two kinds, nothing measured. This is the CMTS
   // remarks-only pattern the FC-04 amendment exists to replace, so the
   // closure gate must refuse it.
-  { type: "missing-documents", status: "evidence", auto: false, rounds: 0, instructionOnRound: null, finalAction: null, closed: false, customsNotified: false,
+  { type: "missing-documents", origin: "intake-variance", status: "evidence", auto: false, rounds: 0, instructionOnRound: null, finalAction: null, closed: false, customsNotified: false,
     evidence: ["photo", "remarks"],
     detail: "Shipper's invoice and fumigation certificate absent from the pouch." },
-  { type: "wrong-weight", status: "closed", auto: true, rounds: 1, instructionOnRound: 1, finalAction: "F1-release-after-correction", closed: true, customsNotified: false,
+  { type: "wrong-weight", origin: "intake-variance", status: "closed", auto: true, rounds: 1, instructionOnRound: 1, finalAction: "F1-release-after-correction", closed: true, customsNotified: false,
     evidence: ["weight", "piece-count", "photo", "remarks"],
     detail: "Scale reads 132 kg over the declared gross; re-weighed and corrected." },
-  { type: "misrouted", status: "action-selected", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F3-forward-mishandled", closed: false, customsNotified: true,
+  { type: "misrouted", origin: "intake-variance", status: "action-selected", auto: false, rounds: 2, instructionOnRound: 2, finalAction: "F3-forward-mishandled", closed: false, customsNotified: true,
     evidence: ["photo", "piece-count", "remarks", "package-condition"],
     detail: "Offloaded at KHI against an LHE routing; onward carriage required." },
 ];
@@ -1417,8 +1706,24 @@ export const CDRS: CDR[] = (() => {
   // The cdr-branch AWB first, then other AWBs carrying an intake variance.
   const pool = [CDR_AWB, ...AWBS.filter((a) => a.intakeVariance && a.AWBId !== CDR_AWB.AWBId)];
 
+  // A dispatch-origin CDR is attached to the AWB that actually holds the record
+  // it disputes, rather than taking the next one off the variance pool. The
+  // pool is assembled from AWBs with an intake variance, and most of those were
+  // never picked or delivered — a picking CDR against cargo that was never
+  // picked leaves `sourceRef` null, which is the exact state the pointer was
+  // added to make impossible, and leaves the workbench with nothing to open.
+  const pickCdrSession = PICK_SESSIONS.find((s) => s.cdrRequired) ?? null;
+  const damagedPod = PODS.find((p) => p.damageAtHandover) ?? null;
+
   return CDR_SEED.map((seed, i) => {
-    const awb = pool[i % pool.length];
+    const dispatchAwb =
+      seed.origin === "handover-damage"
+        ? (damagedPod ? (awbById(damagedPod.awbId) ?? null) : null)
+        : seed.origin === "intake-variance"
+          ? null
+          : (pickCdrSession ? (awbById(pickCdrSession.awbId) ?? null) : null);
+
+    const awb = dispatchAwb ?? pool[i % pool.length];
     const raisedDaysAgo = 6 - Math.floor(i / 2);
     const seq = 318 + i;
     const ref = `CDR-${awb.site}-2026-${String(seq).padStart(5, "0")}`;
@@ -1483,6 +1788,44 @@ export const CDRS: CDR[] = (() => {
       STORAGE_LOCATIONS.find((l) => l.CLASSID === 17) ??
       null;
 
+    // An intake CDR's subject is the AWB itself, so it has nothing further to
+    // point at. The three dispatch routes each dispute a specific record — the
+    // gate pass that was picked against, the piece that was not on the rack,
+    // the POD the receiver signed — and without that pointer the workbench can
+    // only offer the AWB, which is the one screen that does not show what went
+    // wrong. Resolved from the AWB's own dispatch records so the reference
+    // cannot name a gate pass that belongs to different cargo.
+    const pickSession = PICK_SESSIONS.find((s) => s.awbId === awb.AWBId);
+    const pod = PODS.find((p) => p.awbId === awb.AWBId);
+    const missingPieceId =
+      pickSession?.lines.find((l) => l.outcome === "unavailable")?.pieceId ?? null;
+
+    // The two picking routes are not interchangeable, and the session already
+    // decided which one it is — `pickSessionCdrTrigger` ran over its own lines.
+    // Reading that decision through PICK_CDR_ORIGIN rather than trusting the
+    // seed's guess keeps the CDR's origin and the session's reason from
+    // disagreeing about the same event.
+    const origin: CdrOrigin =
+      seed.origin === "intake-variance" || seed.origin === "handover-damage"
+        ? seed.origin
+        : pickSession?.cdrReason
+          ? PICK_CDR_ORIGIN[pickSession.cdrReason]
+          : "intake-variance";
+
+    const sourceRef: CdrSourceRef | null =
+      origin === "intake-variance"
+        ? null
+        : origin === "handover-damage"
+          ? pod
+            ? { gatePassNo: pod.gatePassNo, podId: pod.id }
+            : null
+          : pickSession
+            ? {
+                gatePassNo: pickSession.gatePassNo,
+                ...(missingPieceId ? { pieceId: missingPieceId } : {}),
+              }
+            : null;
+
     return {
       ...audit(raisedDaysAgo, "warehouse.supervisor"),
       ...siteKeys(awb.site),
@@ -1502,6 +1845,8 @@ export const CDRS: CDR[] = (() => {
       HWBNO: null,
       type: seed.type,
       autoRaised: seed.auto,
+      origin,
+      sourceRef,
       variance: seed.auto ? (awb.intakeVariance?.pieces ?? null) : null,
       raisedAt: daysAgo(raisedDaysAgo, 10, 22),
       raisedBy: seed.auto ? "system (variance \u2265 tolerance)" : "i.ali",
@@ -1671,6 +2016,17 @@ export const REEXPORT_CASES: ReExportCase[] = [
 
 const LS_AWB = AWBS.find((a) => a.branch === "long-stay")!;
 
+/**
+ * `AWBSECTION82.CONTENTS` is varchar(250) — one free-text description of the
+ * whole lot, not one row per line. Joining the detail lines' goods (deduped)
+ * is what an officer actually writes on the notice: the statutory notice has
+ * to describe everything the case covers, and a consignment of two different
+ * commodities named after only the first one is not a lawful description.
+ */
+const LS_CONTENTS = [...new Set(detailsFor(LS_AWB.AWBId).map((d) => d.GOODS))]
+  .join(", ")
+  .slice(0, 250) || "General cargo";
+
 export const LONGSTAY_CASES: LongStayCase[] = [
   {
     ...audit(47, "compliance.officer"),
@@ -1691,6 +2047,21 @@ export const LONGSTAY_CASES: LongStayCase[] = [
       { id: 3, noticeNo: "S82-KHI-2026-0118", docNumber: { series: "SECTION_82_NOTICE", value: "S82-KHI-2026-0118", sequence: 118, year: 2026, cargoClassId: null, continuesFromCmts: 90 }, dueOffsetDays: 0, dueAt: daysAgo(17, 9, 0), recipients: ["consignee", "cha", "airline"], sentAt: null, status: "overdue" },
     ],
     escalatedToCustomsAt: daysAgo(15, 11, 0),
+
+    // The consignment descriptors carried ON the Section 82 case, read off
+    // AWBSECTION82 rather than derived from the AWB. They agree with the AWB
+    // here because this case covers the whole consignment and nothing has been
+    // released against it — but a screen must still read these columns, not
+    // `AWB.TOTALPCS`. The moment a consignment is partly delivered or partly
+    // seized, the AWB total overstates what the auction lot or the disposal
+    // certificate actually covers, and the statutory paperwork has to quote
+    // the smaller number. CARGODATE is the migrated legacy cargo date and is
+    // NOT a second dwell clock: `arrivedAt` remains the only input to
+    // `ageDays` / `daysToDeadline`, so no screen can quote a rival deadline.
+    CARGODATE: LS_AWB.CARGODATE,
+    CONTENTS: LS_CONTENTS,
+    PCS: LS_AWB.TOTALPCS,
+
     Examiner: "A. Malik",
     ReceivingPerson: null,
     DCNumber: "DC-2026-00744",
@@ -1796,7 +2167,7 @@ export const EXCEPTION_QUEUE: ExceptionQueueRow[] = [
 ].sort((a, b) => b.ageDays - a.ageDays);
 
 /**
- * AWB closure — FC-08 §17–20. The last gate in the whole system.
+ * AWB closure — FC-08 §14–16. The last gate in the whole system.
  *
  * CMTS has `Lock`, which flips a record read-only, but nothing that says
  * *why* it was safe to flip. The checklist is that reason, and it is
@@ -1832,7 +2203,11 @@ export const CLOSURES: ClosureState[] = AWBS.filter((a) => hasReached(a.stage, "
           : pod.complete
             ? `Captured ${formatDate(pod.capturedAt)} by ${pod.capturedBy}`
             : "POD captured but incomplete — missing evidence",
-        href: "/dispatch/pod",
+        // POD has no route of its own; it is the second tab of the gate-out
+        // screen, because a POD is only ever captured against a gate pass
+        // that has already been let out. Pointing this item at a standalone
+        // /dispatch/pod would 404 — the tab is the surface.
+        href: "/dispatch/gate-out",
       },
       {
         code: "charges",
@@ -1909,11 +2284,14 @@ export function closureFor(awbId: number): ClosureState | null {
  * ------------------------------------------------------------------ */
 
 const EXPORT_SEED = [
-  { awb: "618-44120935", dest: "DXB", carrier: "EK", goods: "Surgical instruments", pcs: 84, kg: 1240 },
-  { awb: "618-44120946", dest: "LHR", carrier: "BA", goods: "Cotton garments", pcs: 210, kg: 3180 },
-  { awb: "618-44120957", dest: "JFK", carrier: "QR", goods: "Sports goods", pcs: 156, kg: 2440 },
-  { awb: "618-44120968", dest: "AMS", carrier: "KL", goods: "Chilled seafood", pcs: 64, kg: 980 },
-  { awb: "618-44120979", dest: "IST", carrier: "TK", goods: "Machinery parts", pcs: 122, kg: 4260 },
+  // `houses` drives CARGOACCEPTANCEHWB. CMTS writes those rows only for a
+  // consolidation, so 0 is a straight master and the empty array that results
+  // means "not a consolidation" — it is an answer, not missing data.
+  { awb: "618-44120935", dest: "DXB", carrier: "EK", goods: "Surgical instruments", pcs: 84, kg: 1240, houses: 0 },
+  { awb: "618-44120946", dest: "LHR", carrier: "BA", goods: "Cotton garments", pcs: 210, kg: 3180, houses: 3 },
+  { awb: "618-44120957", dest: "JFK", carrier: "QR", goods: "Sports goods", pcs: 156, kg: 2440, houses: 2 },
+  { awb: "618-44120968", dest: "AMS", carrier: "KL", goods: "Chilled seafood", pcs: 64, kg: 980, houses: 0 },
+  { awb: "618-44120979", dest: "IST", carrier: "TK", goods: "Machinery parts", pcs: 122, kg: 4260, houses: 0 },
 ];
 
 export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i) => {
@@ -1936,9 +2314,36 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
   const netKg = round2(grossKg - tareKg);
   const varianceKg = round2(netKg - declaredKg);
 
+  const cargoId = `${site}${String(7100 + i).padStart(10, "0")}`;
+
+  // Counter clock. TIMEOFWEIGHMENT / TIMEOFACCEPTENCE are CMTS varchar(5)
+  // with no date attached, so nothing in the type can enforce "accepted at or
+  // after weighed" — only the seeding can. Acceptance is therefore DERIVED
+  // from weighment by a positive offset instead of drawn independently, and
+  // the same two readings feed `weighedAt` and `CARGODATE` so the timestamp
+  // and the text column can never disagree about the same consignment.
+  //
+  // Its own generator, not the row's `rng`: drawing these from `rng` would
+  // have shifted every downstream `pick()` on the record — agent, shipper,
+  // consignee — and quietly rewritten data that has nothing to do with the
+  // clock. The window is also kept inside the morning (latest 09:15) because
+  // screening is stamped at 10:05 and acceptance cannot follow it.
+  const clockRng = seeded((i + 1) * 9187);
+  const weighHour = 7 + intBetween(clockRng, 0, 1);
+  const weighMin = intBetween(clockRng, 0, 40);
+  const acceptMinutes = weighHour * 60 + weighMin + intBetween(clockRng, 10, 35);
+  const hhmm = (h: number, m: number) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  const acceptHour = Math.floor(acceptMinutes / 60);
+  const acceptMin = acceptMinutes % 60;
+
   const acceptance: CargoAcceptance = {
-    CARGODATE: daysAgo(acceptedDaysAgo, 8, 30),
-    CARGOID: 7100 + i,
+    CARGODATE: daysAgo(acceptedDaysAgo, acceptHour, acceptMin),
+    // varchar(13), station prefix + zero-padded counter — the reference the
+    // operator reads off the consignment, not a generated key. Seeded in the
+    // shape that breaks under a parse to int (leading zeros, alpha prefix) so
+    // any future retype back to `number` fails loudly in the fixtures instead
+    // of quietly on a screen.
+    CARGOID: cargoId,
     REVENUECODE: `RC-${420 + i}`,
     CARGOGROUP: "GENERAL",
     CARGOTYPE: "EXPORT",
@@ -1947,8 +2352,8 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
     BAGNO: null,
     LOADEDWEIGHT: grossKg,
     UNLOADEDWEIGHT: tareKg,
-    TIMEOFWEIGHMENT: "08:12",
-    TIMEOFACCEPTENCE: "08:30",
+    TIMEOFWEIGHMENT: hhmm(weighHour, weighMin),
+    TIMEOFACCEPTENCE: hhmm(acceptHour, acceptMin),
     VEHICALNO: `${site}-${String(4420 + i)}`,
     AGENTNAME: pick(rng, ["Al-Huda Clearing", "Pak Gulf CHA", "Swift Clear Agency"]),
     CARGOAGENTNAME: pick(rng, ["Skybridge Forwarding", "Indus Air Cargo", "Gulf Link Logistics"]),
@@ -1983,9 +2388,30 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
     UNIT: "cm",
   }));
 
+  /**
+   * CMTS `CARGOACCEPTANCEHWB` — the house breakdown, written only when the
+   * accepted master covers several houses. Empty for a straight master.
+   *
+   * `CARGODATE` + `CARGOID` is the whole of the relation back to the header;
+   * both are copied off `acceptance` rather than rebuilt from the seed so the
+   * houses cannot drift onto a different acceptance if the header's clock or
+   * reference changes.
+   *
+   * `CARGOGROUP` is int here and varchar on the header — CMTS really does
+   * disagree with itself across the two tables, so the fixture seeds an int
+   * code and does NOT try to echo the header's "GENERAL". The last house of
+   * each consolidation carries null, because an ungrouped house is the normal
+   * case a screen has to render (a blank cell, not a zero).
+   */
+  const hwb: AcceptanceHwb[] = Array.from({ length: seed.houses }, (_, hi) => ({
+    HWBNO: `HWB-${seed.dest}-2026-${String(4810 + i * 10 + hi).padStart(6, "0")}`,
+    CARGOGROUP: hi === seed.houses - 1 ? null : 30 + hi,
+    CARGODATE: acceptance.CARGODATE,
+  }));
+
   const weighment: Weighment = {
     scaleId: `SCALE-${site}-0${i + 1}`,
-    weighedAt: daysAgo(acceptedDaysAgo, 8, 12),
+    weighedAt: daysAgo(acceptedDaysAgo, weighHour, weighMin),
     weighedBy: "export.counter",
     grossKg,
     tareKg,
@@ -2261,6 +2687,7 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
     stage,
     acceptance,
     lines,
+    hwb,
     // Keyed at the acceptance counter off the shipper's paper. Consignment
     // i === 1 is the one whose invoice went in unverified — no supervisor
     // countersign — which is what the completeness gate picks up.
@@ -2322,7 +2749,7 @@ export const EXPORT_CONSIGNMENTS: ExportConsignment[] = EXPORT_SEED.map((seed, i
  * Transhipment (FC-09) — M15
  *
  * Coverage is deliberate. Three cases, each exercising a different way the
- * FC-09 §T10 re-tender gate can fail:
+ * FC-09 §10 re-tender gate can fail:
  *   1. clean — permit live, bond trail unbroken, onward flight confirmed
  *   2. a **lapsed permit** — cargo sat past the permit's validity
  *   3. an **inter-station handoff mid-flight**, where bond continuity is
@@ -2796,6 +3223,12 @@ export const CUSTOMS_CLEARANCES: CustomsClearance[] = CUSTOMS_AWBS.map((a, i) =>
         },
         source: keyedMismatch ? "keyed" : "psw-fetch",
         fetchedAt: keyedMismatch ? null : daysAgo(filedDaysAgo - 4, 11, 30),
+        // Null on both routes these fixtures exercise: the gateway fetch never
+        // touches a scanner, and the keyed-off-the-print case is the gateway
+        // being down with no imaging either. A timestamp here would badge the
+        // record as scanner-captured, which is a claim about provenance the
+        // fixture cannot make.
+        scannedAt: null,
         keyedAt: keyedMismatch ? oocKeyedAt : null,
         issuedAt: daysAgo(filedDaysAgo - 4, 11, 15),
         issuingOfficer: "Deputy Collector — Appraisement",

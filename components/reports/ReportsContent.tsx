@@ -1,760 +1,488 @@
 "use client";
 
-import { useState } from "react";
-import LoadingSkeleton from "../LoadingSkeleton";
-import EmptyState from "../EmptyState";
-import ErrorState from "../ErrorState";
-import { useToast } from "../ToastContext";
-import { BarChart, Bar, XAxis, ResponsiveContainer, Tooltip } from "recharts";
+/**
+ * /reports — FC-12 §18, "Reports & dashboards", module M19.
+ *
+ * WHAT THIS SCREEN WAS. Twenty-four report cards, every one of them a literal.
+ * Each carried a hand-written `trend: "up" | "down" | "neutral"` rendered three
+ * times — an arrow in the table at the row, the same arrow on the card, and the
+ * direction spelled out as a WORD in the drawer — with nothing computing any of
+ * them. Each also carried a chartData array (Mon 42, Tue 38, Wed 55 … / W1 8,
+ * W2 12 … / Apr 82, May 88, Jun 93) drawn as a bar chart twice over. Above them
+ * sat a from/to date range and six dimension selectors, of which five were never
+ * read and the sixth matched the chosen cargo class against the report TITLE;
+ * below them, three export buttons and a Schedule Email that produced toasts and
+ * no bytes. It is two clicks from Home and it is a leaf of Audit & Oversight —
+ * the same superadmin block whose auditor screens were rebuilt to zero
+ * fabricated measurements.
+ *
+ * WHAT IT IS NOW. A CATALOGUE, which is what a reports screen honestly is at
+ * this stage: the list of reports a user can run, each stating what it covers,
+ * which lib/domain call feeds it, what it returns over the fixtures on file, and
+ * where it falls short. Seventeen of the twenty-four have a register behind them
+ * and print real figures — four with nothing missing, thirteen with a named gap.
+ * Seven have no register at all, and they stay on the list with the reason and
+ * the nearest real thing: a report silently dropped from a catalogue is a report
+ * nobody knows to ask for, and the gap is information the client is buying.
+ *
+ * NO DIRECTIONS ANYWHERE. Not an arrow, not a word, not a neutral dash. A delta
+ * needs two observations and every fixture here is one snapshot at DEMO_NOW.
+ * The bars that remain are magnitude within a single breakdown, scaled against
+ * the largest row of that breakdown, and each one is labelled with the column it
+ * distributes over.
+ *
+ * Every derivation lives in components/reports/reportCatalogue.ts; this file is
+ * layout. That separation is the auditor portal's, and it is what makes "is any
+ * figure on this page invented?" answerable by reading one module.
+ */
+
+import { useMemo, useState } from "react";
+import Link from "next/link";
 import {
-  Search,
-  Download,
+  ArrowUpRight,
+  BookOpen,
   ChevronDown,
-  Calendar,
-  Filter,
   LayoutGrid,
+  Search,
   Table2,
-  TrendingUp,
-  TrendingDown,
-  Minus,
 } from "lucide-react";
+import DataTable from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
+import { Meter, SeverityPill, type Severity } from "@/components/hq/HqUi";
+import { AuditorStat } from "@/components/auditor/AuditorUi";
+import { DEMO_NOW, SITES, formatDateTime } from "@/lib/domain";
+import NotShownOnReports from "./NotShownOnReports";
+import {
+  COVERAGE_LABEL,
+  REPORT_CATEGORIES,
+  catalogueSummary,
+  reportCatalogue,
+  type Coverage,
+  type ReportCategory,
+  type ReportEntry,
+} from "./reportCatalogue";
 
-interface ReportCard {
-  id: string;
-  category: string;
-  title: string;
-  description: string;
-  scope: "inc" | "exc";
-  lastUpdated: string;
-  trend: "up" | "down" | "neutral";
-  chartData: { label: string; value: number }[];
-}
+/**
+ * Coverage is a state, so it is drawn with the reserved severity palette — and
+ * always with an icon and a word beside it, never colour alone (HqUi rule 3).
+ * "No register" is neutral rather than red: an unbuilt module is a fact about
+ * scope, not an operational alarm.
+ */
+const COVERAGE_SEVERITY: Record<Coverage, Severity> = {
+  derived: "good",
+  partial: "warning",
+  unavailable: "neutral",
+};
 
-const reportCards: ReportCard[] = [
-  {
-    id: "inbound-by-day",
-    category: "Cargo & Operations",
-    title: "Inbound by Day",
-    description: "Daily inbound cargo volume trend across all stations",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:15",
-    trend: "up",
-    chartData: [
-      { label: "Mon", value: 42 }, { label: "Tue", value: 38 },
-      { label: "Wed", value: 55 }, { label: "Thu", value: 48 },
-      { label: "Fri", value: 62 }, { label: "Sat", value: 35 },
-      { label: "Sun", value: 28 },
-    ],
-  },
-  {
-    id: "pieces-by-class",
-    category: "Cargo & Operations",
-    title: "Pieces by Class",
-    description: "Distribution of pieces across cargo handling classes",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:15",
-    trend: "neutral",
-    chartData: [
-      { label: "GCR", value: 120 }, { label: "ICG", value: 85 },
-      { label: "DGR", value: 42 }, { label: "VAL", value: 18 },
-      { label: "PER", value: 9 },
-    ],
-  },
-  {
-    id: "storage-occupancy",
-    category: "Cargo & Operations",
-    title: "Storage Occupancy",
-    description: "Real-time warehouse storage occupancy by zone",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:15",
-    trend: "up",
-    chartData: [
-      { label: "A", value: 78 }, { label: "B", value: 92 },
-      { label: "C", value: 65 }, { label: "D", value: 54 },
-      { label: "E", value: 88 },
-    ],
-  },
-  {
-    id: "cdr-rate",
-    category: "Cargo & Operations",
-    title: "CDR Rate",
-    description: "Cargo Discrepancy Report rate across imports",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:15",
-    trend: "down",
-    chartData: [
-      { label: "W1", value: 8 }, { label: "W2", value: 12 },
-      { label: "W3", value: 6 }, { label: "W4", value: 4 },
-    ],
-  },
-  {
-    id: "sla-conformance",
-    category: "Cargo & Operations",
-    title: "SLA Conformance",
-    description: "Service level agreement conformance percentage by process",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:15",
-    trend: "up",
-    chartData: [
-      { label: "Putaway", value: 94 }, { label: "Picking", value: 88 },
-      { label: "Customs", value: 76 }, { label: "Dispatch", value: 91 },
-      { label: "Gate", value: 97 },
-    ],
-  },
-  {
-    id: "rack-utilisation",
-    category: "Storage",
-    title: "Rack Utilisation",
-    description: "Rack occupancy percentage across warehouse zones",
-    scope: "inc",
-    lastUpdated: "2026-06-08 08:45",
-    trend: "neutral",
-    chartData: [
-      { label: "R1", value: 85 }, { label: "R2", value: 72 },
-      { label: "R3", value: 91 }, { label: "R4", value: 63 },
-    ],
-  },
-  {
-    id: "average-dwell",
-    category: "Storage",
-    title: "Average Dwell",
-    description: "Average cargo dwell time in storage before dispatch",
-    scope: "inc",
-    lastUpdated: "2026-06-08 08:45",
-    trend: "down",
-    chartData: [
-      { label: "May1", value: 4.2 }, { label: "May2", value: 3.8 },
-      { label: "Jun1", value: 3.5 }, { label: "Jun2", value: 3.1 },
-    ],
-  },
-  {
-    id: "cold-chain-anomalies",
-    category: "Storage",
-    title: "Cold-chain Anomalies",
-    description: "Temperature excursions and cold-chain breach incidents",
-    scope: "inc",
-    lastUpdated: "2026-06-08 08:45",
-    trend: "up",
-    chartData: [
-      { label: "W1", value: 2 }, { label: "W2", value: 5 },
-      { label: "W3", value: 3 }, { label: "W4", value: 7 },
-    ],
-  },
-  {
-    id: "dos-issued",
-    category: "Dispatch",
-    title: "DOs Issued",
-    description: "Delivery orders issued count by day and terminal",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:00",
-    trend: "up",
-    chartData: [
-      { label: "Mon", value: 18 }, { label: "Tue", value: 22 },
-      { label: "Wed", value: 15 }, { label: "Thu", value: 28 },
-      { label: "Fri", value: 31 },
-    ],
-  },
-  {
-    id: "pod-compliance",
-    category: "Dispatch",
-    title: "POD Compliance",
-    description: "Proof of delivery capture rate and compliance tracking",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:00",
-    trend: "up",
-    chartData: [
-      { label: "Apr", value: 82 }, { label: "May", value: 88 },
-      { label: "Jun", value: 93 },
-    ],
-  },
-  {
-    id: "vehicle-dwell-gate",
-    category: "Dispatch",
-    title: "Vehicle Dwell at Gate",
-    description: "Average vehicle dwell time at entry/exit gates in minutes",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:00",
-    trend: "down",
-    chartData: [
-      { label: "Entry", value: 12 }, { label: "Exit", value: 18 },
-      { label: "Peak", value: 25 }, { label: "Off-Peak", value: 8 },
-    ],
-  },
-  {
-    id: "operator-productivity",
-    category: "Workforce",
-    title: "Operator Productivity",
-    description: "Moves per hour by lifter operator and shift",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:30",
-    trend: "up",
-    chartData: [
-      { label: "Shift A", value: 22 }, { label: "Shift B", value: 19 },
-      { label: "Shift C", value: 24 },
-    ],
-  },
-  {
-    id: "lifter-utilisation",
-    category: "Workforce",
-    title: "Lifter Utilisation",
-    description: "Lifter equipment utilisation percentage by asset",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:30",
-    trend: "neutral",
-    chartData: [
-      { label: "LF-01", value: 78 }, { label: "LF-02", value: 85 },
-      { label: "LF-03", value: 62 }, { label: "LF-04", value: 91 },
-    ],
-  },
-  {
-    id: "shift-comparison",
-    category: "Workforce",
-    title: "Shift Comparison",
-    description: "Side-by-side throughput comparison across shifts",
-    scope: "inc",
-    lastUpdated: "2026-06-08 09:30",
-    trend: "neutral",
-    chartData: [
-      { label: "A-Ton", value: 340 }, { label: "B-Ton", value: 295 },
-      { label: "A-Moves", value: 180 }, { label: "B-Moves", value: 210 },
-    ],
-  },
-  {
-    id: "daily-billing",
-    category: "Financial",
-    title: "Daily Billing",
-    description: "Daily invoiced amount in PKR with trend indicator",
-    scope: "inc",
-    lastUpdated: "2026-06-08 10:00",
-    trend: "up",
-    chartData: [
-      { label: "Mon", value: 245000 }, { label: "Tue", value: 312000 },
-      { label: "Wed", value: 198000 }, { label: "Thu", value: 389000 },
-      { label: "Fri", value: 425000 },
-    ],
-  },
-  {
-    id: "waiver-rate",
-    category: "Financial",
-    title: "Waiver Rate",
-    description: "Percentage of charges waived vs total chargeable amount",
-    scope: "inc",
-    lastUpdated: "2026-06-08 10:00",
-    trend: "down",
-    chartData: [
-      { label: "Apr", value: 4.8 }, { label: "May", value: 3.9 },
-      { label: "Jun", value: 2.7 },
-    ],
-  },
-  {
-    id: "outstanding-aging",
-    category: "Financial",
-    title: "Outstanding Aging",
-    description: "Accounts receivable aging distribution in days",
-    scope: "inc",
-    lastUpdated: "2026-06-08 10:00",
-    trend: "up",
-    chartData: [
-      { label: "0-30", value: 1200000 }, { label: "31-60", value: 560000 },
-      { label: "61-90", value: 230000 }, { label: "90+", value: 89000 },
-    ],
-  },
-  {
-    id: "tariff-slab-distribution",
-    category: "Financial",
-    title: "Tariff Slab Distribution",
-    description: "Volume distribution across applicable tariff slabs",
-    scope: "inc",
-    lastUpdated: "2026-06-08 10:00",
-    trend: "neutral",
-    chartData: [
-      { label: "0-50", value: 210 }, { label: "51-100", value: 145 },
-      { label: "101-500", value: 88 }, { label: "500+", value: 42 },
-    ],
-  },
-  {
-    id: "dolley-utilisation",
-    category: "Dolley / GSE",
-    title: "GSE Utilisation",
-    description: "Ground support equipment utilisation rate",
-    scope: "exc",
-    lastUpdated: "2026-06-08 08:00",
-    trend: "neutral",
-    chartData: [
-      { label: "Dolley", value: 67 }, { label: "Tug", value: 73 },
-      { label: "Belt", value: 58 },
-    ],
-  },
-  {
-    id: "gse-maintenance",
-    category: "Dolley / GSE",
-    title: "Maintenance Compliance",
-    description: "Scheduled maintenance completion rate for GSE fleet",
-    scope: "exc",
-    lastUpdated: "2026-06-08 08:00",
-    trend: "down",
-    chartData: [
-      { label: "Q1", value: 94 }, { label: "Q2", value: 87 },
-      { label: "Q3", value: 82 },
-    ],
-  },
-  {
-    id: "gse-mtbf",
-    category: "Dolley / GSE",
-    title: "MTBF",
-    description: "Mean time between failures for GSE assets in hours",
-    scope: "exc",
-    lastUpdated: "2026-06-08 08:00",
-    trend: "up",
-    chartData: [
-      { label: "Dolley", value: 340 }, { label: "Tug", value: 520 },
-    ],
-  },
-  {
-    id: "demand-forecast",
-    category: "Predictive Layer",
-    title: "Demand Forecast",
-    description: "AI-driven 7-day demand forecast with confidence bands",
-    scope: "exc",
-    lastUpdated: "2026-06-08 07:00",
-    trend: "up",
-    chartData: [
-      { label: "D1", value: 280 }, { label: "D2", value: 310 },
-      { label: "D3", value: 265 }, { label: "D4", value: 340 },
-      { label: "D5", value: 390 }, { label: "D6", value: 250 },
-      { label: "D7", value: 300 },
-    ],
-  },
-  {
-    id: "anomaly-detection",
-    category: "Predictive Layer",
-    title: "Anomaly Detection",
-    description: "Machine learning anomaly scores for operational events",
-    scope: "exc",
-    lastUpdated: "2026-06-08 07:00",
-    trend: "neutral",
-    chartData: [
-      { label: "Mon", value: 0.2 }, { label: "Tue", value: 0.8 },
-      { label: "Wed", value: 0.3 }, { label: "Thu", value: 0.9 },
-      { label: "Fri", value: 0.4 },
-    ],
-  },
-  {
-    id: "auction-risk",
-    category: "Predictive Layer",
-    title: "Auction-risk Score",
-    description: "Predictive risk scoring for cargo approaching auction threshold",
-    scope: "exc",
-    lastUpdated: "2026-06-08 07:00",
-    trend: "up",
-    chartData: [
-      { label: "AWB1", value: 62 }, { label: "AWB2", value: 45 },
-      { label: "AWB3", value: 78 }, { label: "AWB4", value: 33 },
-    ],
-  },
+const COVERAGE_OPTIONS: Array<{ value: "All" | Coverage; label: string }> = [
+  { value: "All", label: "Any coverage" },
+  { value: "derived", label: "Derived — every figure fed" },
+  { value: "partial", label: "Runs with a named gap" },
+  { value: "unavailable", label: "No register behind it" },
 ];
 
-const cargoClasses = ["All", "GCR", "ICG", "DGR", "VAL", "PER", "VUN", "AVI"];
-const channels = ["All", "Green", "Yellow", "Red"];
-const stations = ["All", "KHI", "LHE", "ISB", "PEW", "MUX"];
-
 export default function ReportsContent() {
-  const { addToast } = useToast();
-  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
-  const [dateFrom, setDateFrom] = useState("2026-06-01");
-  const [dateTo, setDateTo] = useState("2026-06-08");
-  const [cargoClass, setCargoClass] = useState("All");
-  const [channel, setChannel] = useState("All");
-  const [station, setStation] = useState("All");
-  const [agent, setAgent] = useState("");
-  const [consignee, setConsignee] = useState("");
-  const [airline, setAirline] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState("All");
-  const [expandedCategory, setExpandedCategory] = useState<string | null>("Cargo & Operations");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedReport, setSelectedReport] = useState<ReportCard | null>(null);
+  const entries = useMemo(() => reportCatalogue(), []);
+  const summary = useMemo(() => catalogueSummary(entries), [entries]);
 
-  const categories = Array.from(new Set(reportCards.map((r) => r.category)));
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<"All" | ReportCategory>("All");
+  const [coverage, setCoverage] = useState<"All" | Coverage>("All");
+  const [view, setView] = useState<"grid" | "table">("grid");
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<string[]>([]);
 
-  const filteredReports = reportCards.filter((r) => {
-    if (cargoClass !== "All" && !r.title.toLowerCase().includes(cargoClass.toLowerCase())) return false;
-    return true;
-  });
+  /* A search over the catalogue's own text — the report's name, what it covers
+     and the functions that feed it. It filters the list, which is a real list. */
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return entries.filter((e) => {
+      if (category !== "All" && e.category !== category) return false;
+      if (coverage !== "All" && e.coverage !== coverage) return false;
+      if (q === "") return true;
+      return (
+        e.title.toLowerCase().includes(q) ||
+        e.covers.toLowerCase().includes(q) ||
+        e.source.toLowerCase().includes(q) ||
+        e.category.toLowerCase().includes(q)
+      );
+    });
+  }, [entries, query, category, coverage]);
 
-  const handleExport = (format: string) => {
-    addToast(`Report exported as ${format}`, "success");
-  };
-
-  const handleScheduleExport = () => {
-    addToast("Recurring email export scheduled", "success");
-  };
-
-  const handleOpenReport = (report: ReportCard) => {
-    setSelectedReport(report);
-  };
-
-  const handleRetry = () => {
-    setError(null);
-    setLoading(true);
-    setTimeout(() => setLoading(false), 1200);
-  };
-
-  if (error) {
-    return (
-      <div className="p-6">
-        <ErrorState message={error} onRetry={handleRetry} />
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="p-6">
-        <LoadingSkeleton rows={6} columns={4} />
-      </div>
-    );
-  }
+  const toggle = (list: string[], key: string) =>
+    list.includes(key) ? list.filter((x) => x !== key) : [...list, key];
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3 p-4 bg-white rounded-xl border border-[#E2E8F0]">
+      {/* ---- Scope strip. What stands where the date range used to. ------- */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[14px] border border-[#E2E8F0] bg-white px-5 py-3.5 shadow-sm">
         <div className="flex items-center gap-2">
-          <Calendar size={15} className="text-[#64748B]" />
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white cursor-pointer"
-          />
-          <span className="text-[13px] text-[#64748B]">to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white cursor-pointer"
-          />
+          <BookOpen size={15} className="text-[#64748B]" />
+          <span className="text-[12px] font-semibold text-[#0F172A]">
+            FC-12 §18 — report catalogue
+          </span>
         </div>
-
-        <div className="relative">
-          <select
-            value={cargoClass}
-            onChange={(e) => setCargoClass(e.target.value)}
-            className="h-9 pl-3 pr-8 rounded-lg border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white cursor-pointer appearance-none"
-          >
-            {cargoClasses.map((c) => (
-              <option key={c} value={c}>{c === "All" ? "Cargo Class" : c}</option>
-            ))}
-          </select>
-          <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+            Scope
+          </span>
+          <span className="text-[13px] font-bold text-[#0F172A]">Estate-wide</span>
+          <span className="text-[12px] text-[#64748B]">{SITES.map((s) => s.code).join(" · ")}</span>
         </div>
-
-        <div className="relative">
-          <select
-            value={channel}
-            onChange={(e) => setChannel(e.target.value)}
-            className="h-9 pl-3 pr-8 rounded-lg border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white cursor-pointer appearance-none"
-          >
-            {channels.map((c) => (
-              <option key={c} value={c}>{c === "All" ? "Customs Channel" : c}</option>
-            ))}
-          </select>
-          <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+            As at
+          </span>
+          <span className="font-mono text-[12px] text-[#0F172A]">{formatDateTime(DEMO_NOW)}</span>
         </div>
+        <p className="ml-auto max-w-[52ch] text-[11px] leading-relaxed text-[#64748B]">
+          A catalogue of what can be run, not a live dashboard. One snapshot, so nothing here
+          carries a trend — see the last card for what was removed and why.
+        </p>
+      </div>
 
-        <div className="relative">
-          <select
-            value={station}
-            onChange={(e) => setStation(e.target.value)}
-            className="h-9 pl-3 pr-8 rounded-lg border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white cursor-pointer appearance-none"
-          >
-            {stations.map((s) => (
-              <option key={s} value={s}>{s === "All" ? "Station" : s}</option>
-            ))}
-          </select>
-          <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-        </div>
-
-        <input
-          type="text"
-          placeholder="Agent"
-          value={agent}
-          onChange={(e) => setAgent(e.target.value)}
-          className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white w-[120px]"
+      {/* ---- Catalogue figures -------------------------------------------- */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <AuditorStat
+          label="Reports in the catalogue"
+          value={summary.total.toLocaleString("en-PK")}
+          detail={`${REPORT_CATEGORIES.length} categories, ${summary.categoriesWithData} of them with at least one runnable report, ${summary.rows.toLocaleString("en-PK")} rows returned in total over the fixtures on file. The same list this screen has always carried — none dropped, including the ones nothing can feed.`}
+          source="reportCatalogue() · components/reports/reportCatalogue.ts"
         />
-
-        <input
-          type="text"
-          placeholder="Consignee"
-          value={consignee}
-          onChange={(e) => setConsignee(e.target.value)}
-          className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white w-[120px]"
+        <AuditorStat
+          label="Every figure fed"
+          value={`${summary.derived} of ${summary.total}`}
+          detail="Each figure on these cards comes from a lib/domain call printed on the card itself."
+          source="reportCatalogue() · ReportEntry.coverage === 'derived'"
+          severity="good"
+          status="derived"
         />
-
-        <input
-          type="text"
-          placeholder="Airline"
-          value={airline}
-          onChange={(e) => setAirline(e.target.value)}
-          className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white w-[110px]"
+        <AuditorStat
+          label="Runs with a named gap"
+          value={`${summary.partial} of ${summary.total}`}
+          detail="The report returns real rows, and a part of what its name promises cannot be produced. The gap is printed on the card rather than left to be discovered."
+          source="reportCatalogue() · ReportEntry.gap"
+          severity="warning"
+          status="partial"
+        />
+        <AuditorStat
+          label="No register behind them"
+          value={`${summary.unavailable} of ${summary.total}`}
+          detail={`${entries
+            .filter((e) => e.coverage === "unavailable")
+            .map((e) => e.title)
+            .join(", ")} — kept on the list with the reason on each card, because a report missing from a catalogue is one nobody knows to ask for.`}
+          source="reportCatalogue() · ReportEntry.coverage === 'unavailable'"
+          severity="neutral"
+          status="unbuilt"
         />
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 bg-white rounded-xl border border-[#E2E8F0] p-1">
+      {/* ---- Controls ------------------------------------------------------ */}
+      <div className="flex flex-wrap items-center gap-3 rounded-[14px] border border-[#E2E8F0] bg-white p-4">
+        <div className="relative min-w-[220px] flex-1">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]"
+          />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search report names, coverage and sources"
+            className="h-9 w-full rounded-lg border border-[#E2E8F0] bg-white pl-9 pr-3 text-[13px] text-[#0F172A] outline-none focus:border-[#2E75B6]"
+          />
+        </div>
+
+        <div className="relative">
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as "All" | ReportCategory)}
+            className="h-9 cursor-pointer appearance-none rounded-lg border border-[#E2E8F0] bg-white pl-3 pr-8 text-[13px] text-[#0F172A] outline-none focus:border-[#2E75B6]"
+          >
+            <option value="All">All categories</option>
+            {REPORT_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <ChevronDown
+            size={14}
+            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]"
+          />
+        </div>
+
+        <div className="relative">
+          <select
+            value={coverage}
+            onChange={(e) => setCoverage(e.target.value as "All" | Coverage)}
+            className="h-9 cursor-pointer appearance-none rounded-lg border border-[#E2E8F0] bg-white pl-3 pr-8 text-[13px] text-[#0F172A] outline-none focus:border-[#2E75B6]"
+          >
+            {COVERAGE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <ChevronDown
+            size={14}
+            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]"
+          />
+        </div>
+
+        <div className="ml-auto flex items-center gap-1 rounded-xl border border-[#E2E8F0] p-1">
           <button
-            onClick={() => setViewMode("grid")}
-            className={`flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-semibold cursor-pointer transition-all whitespace-nowrap ${
-              viewMode === "grid" ? "bg-[#0B2545] text-white" : "text-[#64748B] hover:bg-[#F8FAFC]"
+            onClick={() => setView("grid")}
+            className={`flex h-8 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-[12px] font-semibold transition-all ${
+              view === "grid" ? "bg-[#0B2545] text-white" : "text-[#64748B] hover:bg-[#F8FAFC]"
             }`}
           >
             <LayoutGrid size={14} />
-            Grid
+            Cards
           </button>
           <button
-            onClick={() => setViewMode("table")}
-            className={`flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-semibold cursor-pointer transition-all whitespace-nowrap ${
-              viewMode === "table" ? "bg-[#0B2545] text-white" : "text-[#64748B] hover:bg-[#F8FAFC]"
+            onClick={() => setView("table")}
+            className={`flex h-8 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-[12px] font-semibold transition-all ${
+              view === "table" ? "bg-[#0B2545] text-white" : "text-[#64748B] hover:bg-[#F8FAFC]"
             }`}
           >
             <Table2 size={14} />
-            Table
+            Index
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => handleExport("CSV")}
-            className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-semibold text-[#64748B] border border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer transition-colors whitespace-nowrap"
-          >
-            <Download size={13} />
-            CSV
-          </button>
-          <button
-            onClick={() => handleExport("XLSX")}
-            className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-semibold text-[#64748B] border border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer transition-colors whitespace-nowrap"
-          >
-            <Download size={13} />
-            XLSX
-          </button>
-          <button
-            onClick={() => handleExport("PDF")}
-            className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-semibold text-[#64748B] border border-[#E2E8F0] hover:bg-[#F8FAFC] cursor-pointer transition-colors whitespace-nowrap"
-          >
-            <Download size={13} />
-            PDF
-          </button>
-          <button
-            onClick={handleScheduleExport}
-            className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-semibold text-white cursor-pointer transition-colors hover:opacity-90 whitespace-nowrap"
-            style={{ backgroundColor: "#0B2545" }}
-          >
-            Schedule Email
-          </button>
-        </div>
+        <p className="w-full text-[11px] leading-relaxed text-[#64748B]">
+          Three filters, all of which filter this catalogue. The cargo class, customs channel,
+          station, agent, consignee and airline selectors that used to sit here are gone — five of
+          them were never read, and the sixth matched the chosen class against the report title.
+        </p>
       </div>
 
-      {filteredReports.length === 0 ? (
+      {/* ---- The catalogue -------------------------------------------------- */}
+      {filtered.length === 0 ? (
         <EmptyState
-          title="No reports found"
-          description="No reports match the selected filters. Try adjusting your criteria."
+          title="No report matches these filters"
+          description="Every report in the catalogue is still listed — including the six with no register behind them. Clear the filters to see them all."
         />
-      ) : viewMode === "grid" ? (
+      ) : view === "grid" ? (
         <div className="space-y-6">
-          {categories.map((category) => {
-            const catReports = filteredReports.filter((r) => r.category === category);
-            const isExpanded = expandedCategory === category;
+          {REPORT_CATEGORIES.map((cat) => {
+            const inCat = filtered.filter((e) => e.category === cat);
+            if (inCat.length === 0) return null;
+            const isOpen = !collapsed.includes(cat);
+            const unfed = inCat.filter((e) => e.coverage === "unavailable").length;
             return (
-              <div key={category}>
+              <section key={cat}>
                 <button
-                  onClick={() => setExpandedCategory(isExpanded ? null : category)}
-                  className="flex items-center gap-3 w-full text-left mb-3 cursor-pointer group"
+                  onClick={() => setCollapsed((c) => toggle(c, cat))}
+                  className="group mb-3 flex w-full cursor-pointer items-center gap-3 text-left"
                 >
-                  <h3 className="text-[14px] font-bold text-[#0B2545]">{category}</h3>
-                  <span className="text-[12px] text-[#94A3B8]">{catReports.length} reports</span>
+                  <h3 className="text-[14px] font-bold text-[#0B2545]">{cat}</h3>
+                  <span className="text-[12px] text-[#94A3B8]">
+                    {inCat.length} report{inCat.length === 1 ? "" : "s"}
+                    {unfed > 0 ? ` · ${unfed} with no register` : ""}
+                  </span>
                   <ChevronDown
                     size={16}
-                    className={`text-[#94A3B8] transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                    className={`text-[#94A3B8] transition-transform ${isOpen ? "" : "-rotate-90"}`}
                   />
                 </button>
-                {isExpanded && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {catReports.map((report) => (
-                      <ReportCard
-                        key={report.id}
-                        report={report}
-                        onOpen={() => handleOpenReport(report)}
+                {isOpen && (
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                    {inCat.map((entry) => (
+                      <CatalogueCard
+                        key={entry.id}
+                        entry={entry}
+                        open={expanded.includes(entry.id)}
+                        onToggle={() => setExpanded((x) => toggle(x, entry.id))}
                       />
                     ))}
                   </div>
                 )}
-              </div>
+              </section>
             );
           })}
         </div>
       ) : (
-        <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
-          <table className="w-full">
-            <thead style={{ backgroundColor: "#0B2545" }}>
-              <tr>
-                <th className="text-left text-[11px] font-bold uppercase tracking-wider px-4 py-3 text-white">Report</th>
-                <th className="text-left text-[11px] font-bold uppercase tracking-wider px-4 py-3 text-white">Category</th>
-                <th className="text-left text-[11px] font-bold uppercase tracking-wider px-4 py-3 text-white">Trend</th>
-                <th className="text-left text-[11px] font-bold uppercase tracking-wider px-4 py-3 text-white">Last Updated</th>
-                <th className="text-left text-[11px] font-bold uppercase tracking-wider px-4 py-3 text-white">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredReports.map((report, i) => (
-                <tr
-                  key={report.id}
-                  className="border-b border-[#E2E8F0] transition-colors hover:bg-[#F1F5F9]"
-                  style={{ backgroundColor: i % 2 === 1 ? "#F8FAFC" : "white" }}
-                >
-                  <td className="px-4 py-3">
-                    <span className="text-[13px] font-semibold text-[#0F172A]">{report.title}</span>
-                    <p className="text-[11px] text-[#64748B] mt-0.5">{report.description}</p>
-                  </td>
-                  <td className="px-4 py-3 text-[13px] text-[#64748B]">{report.category}</td>
-                  <td className="px-4 py-3">
-                    {report.trend === "up" ? (
-                      <TrendingUp size={16} className="text-[#16A34A]" />
-                    ) : report.trend === "down" ? (
-                      <TrendingDown size={16} className="text-[#DC2626]" />
-                    ) : (
-                      <Minus size={16} className="text-[#64748B]" />
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-[12px] text-[#64748B]">{report.lastUpdated}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => handleOpenReport(report)}
-                      className="h-7 px-3 rounded-lg text-[11px] font-semibold text-white cursor-pointer transition-colors hover:opacity-90 whitespace-nowrap"
-                      style={{ backgroundColor: "#0B2545" }}
-                    >
-                      Open
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <CatalogueIndex entries={filtered} />
       )}
 
-      {selectedReport && (
-        <ReportDetailModal
-          report={selectedReport}
-          onClose={() => setSelectedReport(null)}
+      <NotShownOnReports entries={entries} />
+    </div>
+  );
+}
+
+/**
+ * "15 rows — intake dates". The grain is named after the count rather than
+ * before it, so a report that returns exactly one row still reads properly.
+ */
+function returns(entry: ReportEntry): string {
+  if (entry.rows === null) return "—";
+  return `${entry.rows.toLocaleString("en-PK")} ${entry.rows === 1 ? "row" : "rows"} — ${entry.rowUnit}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * One report
+ * ------------------------------------------------------------------ */
+
+function CatalogueCard({
+  entry,
+  open,
+  onToggle,
+}: {
+  entry: ReportEntry;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const unfed = entry.coverage === "unavailable";
+
+  return (
+    <article
+      className="flex flex-col rounded-[16px] border bg-white p-5 shadow-sm"
+      style={{
+        borderColor: unfed ? "#CBD5E1" : "#E2E8F0",
+        borderStyle: unfed ? "dashed" : "solid",
+      }}
+    >
+      <header className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h4 className="text-[14px] font-bold text-[#0F172A]">{entry.title}</h4>
+          <p className="mt-1 text-[12px] leading-relaxed text-[#64748B]">{entry.covers}</p>
+        </div>
+        <SeverityPill
+          severity={COVERAGE_SEVERITY[entry.coverage]}
+          label={COVERAGE_LABEL[entry.coverage]}
         />
+      </header>
+
+      <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+        {entry.rows === null ? "Returns nothing — there is no query to run" : `Returns ${returns(entry)}`}
+        {entry.restated ? " · restated from the auditor home" : ""}
+      </p>
+
+      {entry.figures.length > 0 && (
+        <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {entry.figures.map((f) => (
+            <div
+              key={f.label}
+              className="rounded-[12px] border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3"
+            >
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+                {f.label}
+              </dt>
+              <dd className="mt-1 text-[18px] font-bold leading-tight tabular-nums text-[#0F172A]">
+                {f.value}
+              </dd>
+              {f.note && (
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[#64748B]">{f.note}</p>
+              )}
+            </div>
+          ))}
+        </dl>
       )}
-    </div>
-  );
-}
 
-function ReportCard({ report, onOpen }: { report: ReportCard; onOpen: () => void }) {
-  return (
-    <div className="bg-white rounded-xl border border-[#E2E8F0] p-5 hover:shadow-md transition-shadow cursor-pointer" onClick={onOpen}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <h4 className="text-[13px] font-bold text-[#0F172A]">{report.title}</h4>
-        </div>
-        {report.trend === "up" ? (
-          <TrendingUp size={16} className="text-[#16A34A]" />
-        ) : report.trend === "down" ? (
-          <TrendingDown size={16} className="text-[#DC2626]" />
-        ) : (
-          <Minus size={16} className="text-[#64748B]" />
-        )}
-      </div>
-      <p className="text-[12px] text-[#64748B] mb-3">{report.description}</p>
-      <div className="h-[60px] mb-3">
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={report.chartData}>
-            <Bar dataKey="value" fill="#2E75B6" radius={[3, 3, 0, 0]} />
-            <Tooltip
-              contentStyle={{
-                fontSize: 11,
-                borderRadius: 8,
-                border: "1px solid #E2E8F0",
-                backgroundColor: "white",
-              }}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] text-[#94A3B8]">{report.lastUpdated}</span>
-        <button
-          onClick={(e) => { e.stopPropagation(); onOpen(); }}
-          className="h-7 px-3 rounded-lg text-[11px] font-semibold text-white cursor-pointer transition-colors hover:opacity-90 whitespace-nowrap"
-          style={{ backgroundColor: "#0B2545" }}
-        >
-          Open Report
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ReportDetailModal({ report, onClose }: { report: ReportCard; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.5)" }} onClick={onClose}>
-      <div className="w-full max-w-[720px] bg-white rounded-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 h-[56px] border-b border-[#E2E8F0]">
-          <div className="flex items-center gap-2">
-            <h3 className="text-[16px] font-bold text-[#0F172A]">{report.title}</h3>
-          </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#F8FAFC] text-[#64748B] cursor-pointer">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      {entry.breakdown && (
+        <div className="mt-3">
+          <button
+            onClick={onToggle}
+            className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-[#1B4F8B] hover:underline"
+          >
+            {open ? "Hide the breakdown" : `Show the breakdown — ${entry.breakdown.rows.length} rows`}
+            <ChevronDown size={12} className={open ? "rotate-180" : ""} />
           </button>
+          {open && (
+            <div className="mt-3 rounded-[12px] border border-[#E2E8F0] px-4 py-3">
+              <p className="text-[11px] font-semibold text-[#475569]">{entry.breakdown.caption}</p>
+              <ul className="mt-3 flex flex-col gap-2.5">
+                {entry.breakdown.rows.map((r) => (
+                  <li key={r.label}>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-[12px] text-[#475569]">{r.label}</span>
+                      <span className="whitespace-nowrap text-[12px] font-bold tabular-nums text-[#0F172A]">
+                        {r.value}
+                      </span>
+                    </div>
+                    <div className="mt-1">
+                      <Meter pct={r.pct} height={6} />
+                    </div>
+                    {r.note && <p className="mt-1 text-[10px] text-[#94A3B8]">{r.note}</p>}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-[10px] leading-relaxed text-[#94A3B8]">
+                Bars are scaled against the largest row of this breakdown. They show magnitude
+                within it and nothing else — not a share of a target, and not a change.
+              </p>
+            </div>
+          )}
         </div>
-        <div className="p-6 space-y-4">
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
-              <p className="text-[13px] text-[#64748B] mb-1">Category</p>
-              <p className="text-[14px] font-semibold text-[#0F172A]">{report.category}</p>
-            </div>
-            <div className="flex-1">
-              <p className="text-[13px] text-[#64748B] mb-1">Last Updated</p>
-              <p className="text-[14px] font-semibold text-[#0F172A]">{report.lastUpdated}</p>
-            </div>
-            <div className="flex-1">
-              <p className="text-[13px] text-[#64748B] mb-1">Trend</p>
-              <div className="flex items-center gap-1">
-                {report.trend === "up" ? (
-                  <TrendingUp size={16} className="text-[#16A34A]" />
-                ) : report.trend === "down" ? (
-                  <TrendingDown size={16} className="text-[#DC2626]" />
-                ) : (
-                  <Minus size={16} className="text-[#64748B]" />
-                )}
-                <span className="text-[14px] font-semibold capitalize">{report.trend}</span>
-              </div>
-            </div>
-          </div>
-          <p className="text-[13px] text-[#64748B]">{report.description}</p>
-          <div className="h-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={report.chartData}>
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#64748B" }} />
-                <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid #E2E8F0", backgroundColor: "white" }} />
-                <Bar dataKey="value" fill="#2E75B6" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="flex gap-2 pt-2">
-            <button className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-semibold text-white cursor-pointer transition-colors hover:opacity-90 whitespace-nowrap" style={{ backgroundColor: "#0B2545" }}>
-              <Download size={13} />
-              Export CSV
-            </button>
-            <button className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-semibold text-white cursor-pointer transition-colors hover:opacity-90 whitespace-nowrap" style={{ backgroundColor: "#0B2545" }}>
-              <Download size={13} />
-              Export PDF
-            </button>
-          </div>
+      )}
+
+      {entry.gap && (
+        <div className="mt-3 rounded-[12px] border border-[#FDE68A] bg-[#FFFBEB] px-4 py-3">
+          <p className="text-[11px] font-semibold text-[#B45309]">
+            {unfed ? "Why this cannot be run" : "What this report cannot answer"}
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-[#92400E]">{entry.gap}</p>
         </div>
+      )}
+
+      {entry.nearest && (
+        <p className="mt-3 text-[11px] leading-relaxed text-[#64748B]">
+          <span className="font-semibold text-[#475569]">Nearest honest thing: </span>
+          {entry.nearest}
+        </p>
+      )}
+
+      <div className="mt-auto pt-3">
+        {entry.href && (
+          <Link
+            href={entry.href}
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#1B4F8B] no-underline hover:underline"
+          >
+            Open the register <ArrowUpRight size={11} />
+          </Link>
+        )}
+        <p className="mt-1.5 font-mono text-[10px] leading-snug text-[#94A3B8]">{entry.source}</p>
       </div>
-    </div>
+    </article>
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * The index view — the same catalogue as one list.
+ *
+ * The Trend column this table used to carry is replaced by Coverage, which is
+ * the question a reader of a report index actually needs answered: can this one
+ * be run, and against what.
+ * ------------------------------------------------------------------ */
+
+function CatalogueIndex({ entries }: { entries: ReportEntry[] }) {
+  const columns = [
+    { key: "report", header: "Report", width: "30%" },
+    { key: "category", header: "Category" },
+    { key: "coverage", header: "Coverage" },
+    { key: "returns", header: "Returns" },
+    { key: "source", header: "Fed by" },
+  ];
+
+  const rows = entries.map((e) => ({
+    report: (
+      <div>
+        <span className="text-[13px] font-semibold text-[#0F172A]">{e.title}</span>
+        <p className="mt-0.5 text-[11px] leading-relaxed text-[#64748B]">{e.covers}</p>
+      </div>
+    ),
+    category: <span className="text-[12px] text-[#64748B]">{e.category}</span>,
+    coverage: (
+      <SeverityPill severity={COVERAGE_SEVERITY[e.coverage]} label={COVERAGE_LABEL[e.coverage]} />
+    ),
+    returns: (
+      <span className="text-[12px] font-semibold tabular-nums text-[#0F172A]">{returns(e)}</span>
+    ),
+    source: <span className="font-mono text-[10px] leading-snug text-[#94A3B8]">{e.source}</span>,
+  }));
+
+  return <DataTable columns={columns} rows={rows} headerStyle="navy" zebra />;
 }

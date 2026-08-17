@@ -5,8 +5,8 @@
  * `GODOWNRENTDETAIL` (26) + `GODOWNRENTDUPLICATE` (10).
  *
  * Gap G9: the whole godown-rent calculation chain — six CMTS tables, 165
- * columns — had no screen. `/cmts-absorption/godown-rent-history` lists
- * vouchers but cannot open one.
+ * columns — had no screen. The CMTS preview screen this replaces listed
+ * vouchers but could not open one.
  *
  * Three things this makes visible that the header alone cannot:
  *   • the **detail lines** the `sum*` columns are the sum of. A consignment
@@ -15,14 +15,47 @@
  *     ACCTITLE and friends had 0 occurrences in the pre-P0 demo.
  *   • **duplicates** — a reprint is a sequenced, chargeable event with a
  *     recorded reason, not a silent re-print.
+ *
+ * TWO LENSES
+ * ----------
+ * This screen was voucher-scoped only, and that turned out to be a modelling
+ * limit rather than a navigation one. CMTS bills rent forward in instalments
+ * and cuts a new GODOWNRENT voucher each time, so a single AWB routinely spans
+ * several GRVs — the legacy history screen showed five period rows carrying
+ * four different voucher numbers. A voucher-scoped screen can only ever stamp
+ * one voucher on every row, so that consignment is not expressible here at all.
+ *
+ * The fix is a second lens over one shared model (`components/billing/
+ * godown-rent/rentLedger.ts`), not a search box: the AWB lens owns the periods
+ * and each period carries its own voucher, and filtering those rows back down
+ * to a single voucher is what produces the voucher lens. One constructor, so
+ * the two cannot disagree.
  */
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, CalendarClock, Copy, FileText, Receipt, Wallet } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  CalendarClock,
+  Check,
+  Copy,
+  FileText,
+  Link2,
+  Receipt,
+  Wallet,
+} from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
+import AwbRentLedgerView from "@/components/billing/godown-rent/AwbRentLedgerView";
+import VoucherChargeBreakdown from "@/components/billing/godown-rent/VoucherChargeBreakdown";
+import { deriveLedger, rateLabel } from "@/components/billing/godown-rent/rentLedger";
+import {
+  buildTimeline,
+  formatExact,
+  reconcileVoucher,
+} from "@/components/billing/godown-rent/voucherReconciliation";
 import { AuditStrip, DocNumber } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
@@ -34,7 +67,6 @@ import {
   formatPkr,
   grDetailsFor,
   listGodownRents,
-  storageLocation,
 } from "@/lib/domain";
 
 const BILL_TONE: Record<string, { bg: string; fg: string }> = {
@@ -45,99 +77,72 @@ const BILL_TONE: Record<string, { bg: string; fg: string }> = {
 };
 
 /**
+ * One voucher field, carrying the CMTS column it maps to so migration parity is
+ * checkable on sight — the same contract as the shared `Field` component, kept
+ * local because this screen labels a fair number of its values with derived text
+ * ("PKR 4,968", "true") rather than raw record values.
+ *
+ * A null renders as the word `null` in the muted tone rather than as blank: on a
+ * parity screen "this column exists and is empty" and "this column was never
+ * mapped" are different findings, and an empty cell cannot tell them apart.
+ */
+function VoucherField({
+  label,
+  cmts,
+  value,
+  mono,
+}: {
+  label: string;
+  cmts: string;
+  value: string | null;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-baseline gap-1.5 flex-wrap">
+        <span className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">
+          {label}
+        </span>
+        <span className="text-[9px] font-mono text-[#CBD5E1]" title={`CMTS column: ${cmts}`}>
+          {cmts}
+        </span>
+      </div>
+      <span
+        className={`text-[13px] font-medium break-words ${mono ? "font-mono" : ""}`}
+        style={{ color: value ? "#0F172A" : "#CBD5E1" }}
+      >
+        {value ?? "null"}
+      </span>
+    </div>
+  );
+}
+
+/**
  * Legacy CMTS `godown-rent-history` broke a voucher down by TIME-BASED RATE
  * TIER / PERIOD — the free-period grace, the standard band, the premium
  * long-stay band, each with its own rate, surcharge and waiver. The canonical
  * screen only breaks down by zone/class/location, so this slice was invisible.
- * Static demo data, consistent with the file's other GRV values.
+ *
+ * The rows used to be a static const here, and it hardcoded "Day 1–3 free".
+ * That literal was wrong for most of the product: free days are a CARGOCLASS
+ * property and range from 0 (CDT, CDR, REX, LST) to 7 (DIP). The rows are now
+ * built by `rentLedger.buildLedger`, which reads the grace band off the cargo
+ * class and walks the chargeable tiers forward from cargo intake — so the
+ * FC-07 BC-3 ordering (clock starts at intake → free band → chargeable =
+ * dwell − free) is structural rather than asserted, and a class with no free
+ * allowance renders no free row instead of a wrong one.
  */
-type RentPeriod = {
-  label: string;
-  from: string;
-  to: string;
-  days: number;
-  rate: string;
-  surcharge: string;
-  computed: number;
-  waived: number;
-  net: number;
-  voucher: string;
-  user: string;
-  remark: string;
-};
-
-const RENT_PERIODS: RentPeriod[] = [
-  {
-    label: "Day 1–3 free",
-    from: "01 Feb 2026",
-    to: "03 Feb 2026",
-    days: 3,
-    rate: "PKR 0/kg/day",
-    surcharge: "0%",
-    computed: 0,
-    waived: 0,
-    net: 0,
-    voucher: "GRV-2026-0142",
-    user: "asaleem",
-    remark: "Free period — first 72h storage grace",
-  },
-  {
-    label: "Day 4–7 standard",
-    from: "04 Feb 2026",
-    to: "07 Feb 2026",
-    days: 4,
-    rate: "PKR 35/kg/day",
-    surcharge: "0%",
-    computed: 168000,
-    waived: 0,
-    net: 168000,
-    voucher: "GRV-2026-0142",
-    user: "asaleem",
-    remark: "Standard godown rate",
-  },
-  {
-    label: "Day 8–14 standard",
-    from: "08 Feb 2026",
-    to: "14 Feb 2026",
-    days: 7,
-    rate: "PKR 35/kg/day",
-    surcharge: "15% DGR",
-    computed: 338100,
-    waived: 67620,
-    net: 270480,
-    voucher: "GRV-2026-0142",
-    user: "asaleem",
-    remark: "Customs hold waiver (20%)",
-  },
-  {
-    label: "Day 15+ premium",
-    from: "15 Feb 2026",
-    to: "18 Feb 2026",
-    days: 4,
-    rate: "PKR 60/kg/day",
-    surcharge: "15% DGR",
-    computed: 331200,
-    waived: 0,
-    net: 331200,
-    voucher: "GRV-2026-0142",
-    user: "asaleem",
-    remark: "Premium long-stay tier",
-  },
-];
-
-const RENT_PERIOD_TOTALS = RENT_PERIODS.reduce(
-  (acc, p) => ({
-    days: acc.days + p.days,
-    computed: acc.computed + p.computed,
-    waived: acc.waived + p.waived,
-    net: acc.net + p.net,
-  }),
-  { days: 0, computed: 0, waived: 0, net: 0 },
-);
 
 export default function GodownRentPage() {
   const { scope, isHq } = useSite();
   const rents = useMemo(() => listGodownRents(scope), [scope]);
+
+  /**
+   * Which question the screen is answering. `voucher` is the original screen —
+   * "what is on this GRV". `awb` is the ported CMTS lens — "what has this AWB
+   * been charged across every GRV cut against it".
+   */
+  const [lens, setLens] = useState<"voucher" | "awb">("voucher");
 
   const [selected, setSelected] = useState<string | null>(rents[0]?.VOUCHERNO ?? null);
   const g = rents.find((x) => x.VOUCHERNO === selected) ?? rents[0] ?? null;
@@ -148,6 +153,62 @@ export default function GodownRentPage() {
   const [tab, setTab] = useState<"lines" | "payment" | "duplicates">("lines");
 
   const unpaid = rents.filter((r) => !r.PAID);
+
+  /**
+   * The voucher lens is the AWB ledger narrowed to one voucher. The free band
+   * (voucher `null`) is kept: it heads the AWB's storage clock, and dropping it
+   * would show the chargeable bands with nothing before them — exactly the
+   * ordering FC-07 BC-3 exists to prevent.
+   */
+  const ledger = useMemo(
+    () => (g ? deriveLedger(g.AWBNO, rents.filter((r) => r.AWBNO === g.AWBNO)) : null),
+    [g, rents],
+  );
+  const voucherPeriods = useMemo(
+    () =>
+      ledger && g
+        ? ledger.periods.filter((p) => p.voucher === null || p.voucher === g.VOUCHERNO)
+        : [],
+    [ledger, g],
+  );
+  /**
+   * The document-date sequence. Built even when a date is null — a missing
+   * DELIVERYDATE is a state worth showing ("still in the shed"), not a row to
+   * drop, and dropping it would also let a later event silently take its place
+   * in the ordering check.
+   */
+  const timeline = useMemo(
+    () => (g ? buildTimeline(g) : { events: [], ordered: true }),
+    [g],
+  );
+
+  /**
+   * Computed here rather than inside the breakdown tab so the header can warn
+   * too. The headline NETPAYABLE is the figure a reader takes away from this
+   * screen, and it is reprinted from the record without being checked against
+   * the arithmetic that is supposed to produce it — so when ANY identity the
+   * reconciler checks fails, the warning has to sit next to the number, not
+   * behind a tab. Which of them failed decides what the badge says; that it
+   * appears at all is decided by the same `breaks` list the tab reads.
+   */
+  const recon = useMemo(
+    () => (g ? reconcileVoucher(g, lines, awb?.AWBId ?? null) : null),
+    [g, lines, awb],
+  );
+
+  const periodTotals = useMemo(
+    () =>
+      voucherPeriods.reduce(
+        (acc, p) => ({
+          days: acc.days + p.days,
+          computed: acc.computed + p.computed,
+          waived: acc.waived + p.waived,
+          net: acc.net + p.net,
+        }),
+        { days: 0, computed: 0, waived: 0, net: 0 },
+      ),
+    [voucherPeriods],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -169,10 +230,47 @@ export default function GodownRentPage() {
             Godown Rent Voucher
           </h1>
           <p className="text-[13px] text-[#64748B] mt-1">
-            The voucher, its line breakdown, and how it was paid.
+            The voucher, its line breakdown, and how it was paid — or the same rent read AWB-first,
+            across every voucher cut against it.
             {isHq ? " All sites." : ` ${scope} only.`}
           </p>
         </div>
+      </div>
+
+      {/*
+        The lens switch. Two different questions, not two skins: the voucher
+        lens cannot express one AWB spanning several GRVs, because every row it
+        renders belongs to the voucher it was opened from.
+      */}
+      <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-4 flex flex-wrap items-center gap-3">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+          Scope
+        </span>
+        {(
+          [
+            ["voucher", "By voucher", "What is on one GRV"],
+            ["awb", "By AWB", "Every rent period, across every GRV"],
+          ] as const
+        ).map(([v, label, hint]) => (
+          <button
+            key={v}
+            onClick={() => setLens(v)}
+            title={hint}
+            className="h-8 px-3.5 rounded-lg text-[12px] font-semibold border transition-colors cursor-pointer"
+            style={{
+              backgroundColor: lens === v ? "#0B2545" : "#FFFFFF",
+              color: lens === v ? "#FFFFFF" : "#475569",
+              borderColor: lens === v ? "#0B2545" : "#E2E8F0",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="text-[11px] text-[#64748B]">
+          {lens === "voucher"
+            ? "Voucher-scoped — every row below belongs to the selected GRV."
+            : "AWB-scoped — rows carry their own GRV, so an AWB billed forward in instalments stays one consignment."}
+        </span>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -189,16 +287,22 @@ export default function GodownRentPage() {
             value: String(rents.filter((r) => r.WAIVEOFF).length),
             tone: "#7C3AED",
           },
-          {
-            label: "Periods",
-            value: String(RENT_PERIODS.length),
-            tone: "#0F172A",
-          },
-          {
-            label: "Net rent",
-            value: formatPkr(RENT_PERIOD_TOTALS.net),
-            tone: "#0B2545",
-          },
+          // Rate-tier KPIs describe the selected voucher, so they only belong
+          // on the voucher lens — the AWB lens totals its own periods in place.
+          ...(lens === "voucher"
+            ? [
+                {
+                  label: "Periods on this voucher",
+                  value: String(voucherPeriods.length),
+                  tone: "#0F172A",
+                },
+                {
+                  label: "Net rent",
+                  value: formatPkr(periodTotals.net),
+                  tone: "#0B2545",
+                },
+              ]
+            : []),
         ].map((k) => (
           <div key={k.label} className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
             <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
@@ -216,6 +320,8 @@ export default function GodownRentPage() {
           title="No vouchers at this site"
           description="A GR voucher issues once FC-07 charges are computed and the five release conditions are evaluated."
         />
+      ) : lens === "awb" ? (
+        <AwbRentLedgerView rents={rents} />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
@@ -286,38 +392,169 @@ export default function GodownRentPage() {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
-                      Net payable
-                    </p>
+                    <div className="flex items-baseline gap-1.5 justify-end">
+                      <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                        Net payable
+                      </p>
+                      <span className="text-[9px] font-mono text-[#CBD5E1]" title="CMTS column: NETPAYABLE">
+                        NETPAYABLE
+                      </span>
+                    </div>
                     <p className="text-[22px] font-bold text-[#0B2545] font-mono">
                       {formatPkr(g.NETPAYABLE)}
                     </p>
+                    {/*
+                      The stored figure measured against the arithmetic that is
+                      supposed to produce it. Printing only the stored one would
+                      make a defect invisible at exactly the point a reader takes
+                      the number away.
+
+                      The gate is the reconciler's whole break list — the same
+                      condition `VoucherChargeBreakdown` opens its panel on — so
+                      the header and the tab can never disagree about whether
+                      this voucher reconciles. Gating it on the net-payable
+                      identity alone was the bug: that identity holds on every
+                      voucher here, so the badge could never fire, while the ten
+                      roll-up checks were raising a real break (GR-2026-04424's
+                      stale SUMMINIMUMCHARGES snapshot) that the header sat
+                      silently on top of.
+
+                      TWO FAULTS, TWO MESSAGES. They are not folded into one
+                      badge because they ask the reader for different things.
+                      A NETPAYABLE that contradicts its own waiver means THIS
+                      number is wrong — the consignee is billed an amount the
+                      voucher does not support — so the corrected figure belongs
+                      directly beneath it. A roll-up that disagrees with its own
+                      lines means the headline is right and the voucher cannot be
+                      reconciled against the legacy record: a migration exception,
+                      not a billing error. Reporting the second in the first's
+                      words would print a "correction" under a NETPAYABLE that
+                      needs none, and would tell a finance officer to hold a
+                      payment that is in fact correct — so the roll-up case says
+                      in as many words that the headline figure stands.
+                    */}
+                    {recon &&
+                      recon.breaks.length > 0 &&
+                      (!recon.netPayableAgrees ? (
+                        <div className="mt-1 flex flex-col items-end gap-0.5">
+                          <span className="h-[18px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[10px] font-bold inline-flex items-center gap-1">
+                            <AlertTriangle size={10} strokeWidth={2.5} />
+                            Does not match its own columns
+                          </span>
+                          <span className="text-[11px] text-[#64748B]">
+                            TOTALAMOUNT − WAIVEOFFAMOUNT ={" "}
+                            <span className="font-mono font-semibold text-[#0F172A]">
+                              {formatExact(recon.netPayableDerived)}
+                            </span>
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="mt-1 flex flex-col items-end gap-0.5">
+                          <span className="h-[18px] px-1.5 rounded bg-[#FEF3C7] text-[#D97706] text-[10px] font-bold inline-flex items-center gap-1">
+                            <AlertTriangle size={10} strokeWidth={2.5} />
+                            {recon.breaks.length} figure
+                            {recon.breaks.length === 1 ? " does" : "s do"} not reconcile
+                          </span>
+                          {/*
+                            The single-break case names the column rather than
+                            only counting it: on this voucher the CMTS column IS
+                            the finding, and a reader who can see it here already
+                            knows the headline figure is not the one at fault.
+                          */}
+                          <span className="text-[11px] text-[#64748B] text-right max-w-[320px] leading-snug">
+                            NETPAYABLE itself checks out —{" "}
+                            {recon.breaks.length === 1 ? (
+                              <>
+                                the break is{" "}
+                                <span className="font-mono text-[#0F172A]">
+                                  {recon.breaks[0].title}
+                                </span>
+                              </>
+                            ) : (
+                              <>{recon.breaks.length} identities on this voucher do not</>
+                            )}
+                            .{" "}
+                            <button
+                              type="button"
+                              onClick={() => setTab("lines")}
+                              className="font-semibold text-[#1B4F8B] underline underline-offset-2 cursor-pointer bg-transparent border-0 p-0 text-[11px]"
+                            >
+                              See charge breakdown
+                            </button>
+                          </span>
+                        </div>
+                      ))}
                   </div>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-4 pt-4 border-t border-[#F1F5F9]">
                   {(
                     [
-                      ["CHALLANNO", g.CHALLANNO],
-                      ["TOTALWEIGHT", formatKg(g.TOTALWEIGHT)],
-                      ["CHARGEABLEWEIGHT", formatKg(g.CHARGEABLEWEIGHT)],
-                      ["DAYS", String(g.DAYS)],
-                      ["SUPPLIMENTDAYS", String(g.SUPPLIMENTDAYS)],
-                      ["TOTALPIECES", String(g.TOTALPIECES)],
-                      ["NTN", g.NTN],
-                      ["STN", g.STN],
+                      ["Challan", "CHALLANNO", g.CHALLANNO, true],
+                      ["Actual weight", "TOTALWEIGHT", formatKg(g.TOTALWEIGHT), true],
+                      ["Chargeable weight", "CHARGEABLEWEIGHT", formatKg(g.CHARGEABLEWEIGHT), true],
+                      ["Days", "DAYS", String(g.DAYS), true],
+                      ["Supplement days", "SUPPLIMENTDAYS", String(g.SUPPLIMENTDAYS), true],
+                      ["Pieces", "TOTALPIECES", String(g.TOTALPIECES), true],
+                      ["Consignee NTN", "NTN", g.NTN, true],
+                      ["Consignee STN", "STN", g.STN, true],
                     ] as const
-                  ).map(([k, v]) => (
-                    <div key={k} className="flex flex-col gap-1">
-                      <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-                      <span
-                        className="text-[13px] font-medium break-words"
-                        style={{ color: v ? "#0F172A" : "#CBD5E1" }}
-                      >
-                        {v ?? "null"}
-                      </span>
-                    </div>
+                  ).map(([label, cmts, value, mono]) => (
+                    <VoucherField key={cmts} label={label} cmts={cmts} value={value} mono={mono} />
                   ))}
+                </div>
+              </div>
+
+              {/*
+                What the voucher points at. These are cross-references rather
+                than values — every one of them is a handle onto another CMTS
+                document — so they earn a card instead of six more cells in the
+                header grid, where a reader would take them for attributes of
+                the voucher itself.
+              */}
+              <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+                  <Link2 size={15} className="text-[#64748B]" />
+                  <div>
+                    <h3 className="text-[14px] font-semibold text-[#0F172A]">References</h3>
+                    <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                      The documents this voucher is raised against, and the number its detail lines
+                      carry back to it.
+                    </p>
+                  </div>
+                </div>
+                <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-4">
+                  <VoucherField
+                    label="Delivery order"
+                    cmts="DONO"
+                    value={g.DONO}
+                    mono
+                  />
+                  <VoucherField
+                    label="Clearing agent"
+                    cmts="CLEARINGAGENT"
+                    value={g.clearingAgent}
+                  />
+                  <VoucherField label="Sub AWB" cmts="SUBAWBNO" value={g.SUBAWBNO} mono />
+                  <VoucherField label="GR reference" cmts="GRREFERENCE" value={g.GRREFERENCE} mono />
+                  <VoucherField label="Godown number" cmts="GDNUM" value={g.GDNum} mono />
+                  {/*
+                    GRNO is the GODOWNRENTDETAIL side of the same relation: every
+                    detail line stamps the voucher it belongs to, and that stamp
+                    IS the join — CMTS gives the grid no other link back. Read
+                    off the lines rather than echoing VOUCHERNO so a line that
+                    ever carried a different number would show up here.
+                  */}
+                  <VoucherField
+                    label="Stamped on detail lines"
+                    cmts="GODOWNRENTDETAIL.GRNO"
+                    value={
+                      lines.length === 0
+                        ? null
+                        : Array.from(new Set(lines.map((d) => d.GRNO))).join(", ")
+                    }
+                    mono
+                  />
                 </div>
               </div>
 
@@ -325,7 +562,7 @@ export default function GodownRentPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 {(
                   [
-                    ["lines", `Detail lines (${lines.length})`],
+                    ["lines", `Charge breakdown (${lines.length})`],
                     ["payment", "Payment block"],
                     ["duplicates", `Duplicates (${dups.length})`],
                   ] as const
@@ -345,89 +582,7 @@ export default function GodownRentPage() {
                 ))}
               </div>
 
-              {tab === "lines" && (
-                <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-                  <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
-                    <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                      GODOWNRENTDETAIL — what the sum* columns are the sum of
-                    </h3>
-                    <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                      One line per class / subclass / location the consignment occupied.
-                    </p>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[860px]">
-                      <thead>
-                        <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                          {["Zone", "Class / Subclass", "Days", "Weight", "Handling", "Storage", "Location", "Ex-tax", "Tax", "Total"].map((h) => (
-                            <th
-                              key={h}
-                              className="text-left px-3 py-2.5 text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider whitespace-nowrap"
-                            >
-                              {h}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {lines.map((d) => (
-                          <tr key={d.Id} className="border-b border-[#F1F5F9] last:border-0">
-                            <td className="px-3 py-2.5 text-[12px] text-[#0F172A] font-medium whitespace-nowrap">
-                              {storageLocation(d.LOCATIONID)?.ABBREVATION ?? d.LOCATIONID}
-                            </td>
-                            <td className="px-3 py-2.5 text-[12px] text-[#475569] whitespace-nowrap">
-                              {cargoClass(d.CLASSID).ABBREVATION}
-                              <span className="text-[#94A3B8]">
-                                {" "}
-                                / #{d.SUBCLASSID}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569]">{d.DAYS}</td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatKg(d.WEIGHT)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.HandlingCharges)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.StorgeUnitCharges)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.LocationCharges)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.TotalAmountWithoutTax)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                              {formatPkr(d.Tax)}
-                            </td>
-                            <td className="px-3 py-2.5 font-mono text-[13px] font-semibold text-[#0F172A] whitespace-nowrap">
-                              {formatPkr(d.TotalAmountWithTax)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0] grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-2">
-                    {(
-                      [
-                        ["sumHandlingCharges", g.sumHandlingCharges],
-                        ["sumStorgeUnitCharges", g.sumStorgeUnitCharges],
-                        ["sumLocationChargesAmount", g.sumLocationChargesAmount],
-                        ["sumTax", g.sumTax],
-                      ] as const
-                    ).map(([k, v]) => (
-                      <div key={k}>
-                        <p className="text-[9px] font-mono text-[#CBD5E1]">{k}</p>
-                        <p className="font-mono text-[12px] font-semibold text-[#0F172A]">
-                          {formatPkr(v)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {tab === "lines" && recon && <VoucherChargeBreakdown recon={recon} />}
 
               {tab === "payment" && (
                 <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
@@ -443,32 +598,51 @@ export default function GodownRentPage() {
                   <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-4">
                     {(
                       [
-                        ["PAID", g.PAID ? "true" : "false"],
-                        ["Paymode", g.Paymode],
-                        ["PAYDATE", g.PAYDATE ? formatDate(g.PAYDATE) : null],
-                        ["CASHAMOUNT", g.CASH ? formatPkr(g.CASHAMOUNT) : null],
-                        ["PAYORDERNO", g.PAYORDERNO],
-                        ["PAYORDERAMOUNT", g.PayOrder ? formatPkr(g.PAYORDERAMOUNT) : null],
-                        ["CHEQUENO", g.CHEQUENO ? String(g.CHEQUENO) : null],
-                        ["CHEQUEDATE", g.CHEQUEDATE ? formatDate(g.CHEQUEDATE) : null],
-                        ["BANKNAME", g.BANKNAME],
-                        ["BANKBRANCHNAME", g.BANKBRANCHNAME],
-                        ["ACCTITLE", g.ACCTITLE],
-                        ["ACCNO", g.ACCNO],
-                        ["CREDITCARD", g.CREDITCARD],
-                        ["RECIEVEDBY", g.RECIEVEDBY],
-                        ["OverPaidAmount", g.OverPaidAmount ? formatPkr(g.OverPaidAmount) : null],
+                        ["Paid", "PAID", g.PAID ? "true" : "false", false],
+                        ["Pay mode", "Paymode", g.Paymode, false],
+                        ["Paid on", "PAYDATE", g.PAYDATE ? formatDate(g.PAYDATE) : null, false],
+                        ["Cash", "CASHAMOUNT", g.CASH ? formatPkr(g.CASHAMOUNT) : null, true],
+                        ["Pay order", "PAYORDERNO", g.PAYORDERNO, true],
+                        [
+                          "Pay order amount",
+                          "PAYORDERAMOUNT",
+                          g.PayOrder ? formatPkr(g.PAYORDERAMOUNT) : null,
+                          true,
+                        ],
+                        ["Cheque", "CHEQUENO", g.CHEQUENO ? String(g.CHEQUENO) : null, true],
+                        [
+                          "Cheque date",
+                          "CHEQUEDATE",
+                          g.CHEQUEDATE ? formatDate(g.CHEQUEDATE) : null,
+                          false,
+                        ],
+                        ["Bank", "BANKNAME", g.BANKNAME, false],
+                        ["Branch", "BANKBRANCHNAME", g.BANKBRANCHNAME, false],
+                        ["Account title", "ACCTITLE", g.ACCTITLE, false],
+                        ["Account number", "ACCNO", g.ACCNO, true],
+                        // MASTERCARD sits beside CREDITCARD rather than in the
+                        // References card the ticket grouped it under: both are
+                        // card instruments this voucher was settled with, and
+                        // splitting a pair of columns across two cards is how a
+                        // reader ends up believing they are unrelated fields.
+                        ["Credit card", "CREDITCARD", g.CREDITCARD, true],
+                        ["Master card", "MASTERCARD", g.MASTERCARD, true],
+                        ["Received by", "RECIEVEDBY", g.RECIEVEDBY, false],
+                        [
+                          "Overpaid",
+                          "OverPaidAmount",
+                          g.OverPaidAmount ? formatPkr(g.OverPaidAmount) : null,
+                          true,
+                        ],
                       ] as const
-                    ).map(([k, v]) => (
-                      <div key={k} className="flex flex-col gap-1">
-                        <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-                        <span
-                          className="text-[13px] font-medium break-words"
-                          style={{ color: v ? "#0F172A" : "#CBD5E1" }}
-                        >
-                          {v ?? "null"}
-                        </span>
-                      </div>
+                    ).map(([label, cmts, value, mono]) => (
+                      <VoucherField
+                        key={cmts}
+                        label={label}
+                        cmts={cmts}
+                        value={value}
+                        mono={mono}
+                      />
                     ))}
                   </div>
                   <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
@@ -528,6 +702,94 @@ export default function GodownRentPage() {
                 </div>
               )}
 
+              {/*
+                The voucher's document dates, in the order the events happen.
+
+                Rendered as a sequence rather than as four date cells because
+                the ordering is the check: a pay order dated before the voucher
+                it settles, or a delivery before the GRV was raised, is a real
+                defect and invisible in a grid. FROMDATE/TODATE are shown with
+                the header above instead of here — they bound the period being
+                billed rather than marking an event, and TODATE sits at the
+                billing cut-off, so folding them in would report a voucher
+                raised mid-period as running backwards, which is exactly what
+                CMTS does when rent is billed forward in instalments.
+              */}
+              <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <CalendarClock size={15} className="text-[#64748B]" />
+                    <div>
+                      <h3 className="text-[14px] font-semibold text-[#0F172A]">Document dates</h3>
+                      <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                        Arrival through settlement — the sequence a gate officer reads top to
+                        bottom.
+                      </p>
+                    </div>
+                  </div>
+                  <span
+                    className="h-[18px] px-1.5 rounded text-[10px] font-bold inline-flex items-center gap-1 whitespace-nowrap"
+                    style={
+                      timeline.ordered
+                        ? { backgroundColor: "#DCFCE7", color: "#16A34A" }
+                        : { backgroundColor: "#FEE2E2", color: "#DC2626" }
+                    }
+                  >
+                    {timeline.ordered ? (
+                      <>
+                        <Check size={10} strokeWidth={3} /> Runs forward
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle size={10} strokeWidth={2.5} /> Out of sequence
+                      </>
+                    )}
+                  </span>
+                </div>
+                <div className="p-5 flex flex-col gap-3">
+                  {timeline.events.map((e) => (
+                    <div
+                      key={e.cmts}
+                      className="flex items-start justify-between gap-4 flex-wrap"
+                      style={
+                        e.outOfOrder
+                          ? {
+                              backgroundColor: "#FEF2F2",
+                              borderRadius: 8,
+                              padding: "6px 8px",
+                              margin: "-6px -8px",
+                            }
+                          : undefined
+                      }
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <span className="text-[12px] font-semibold text-[#0F172A]">{e.label}</span>
+                          <span
+                            className="text-[9px] font-mono text-[#CBD5E1]"
+                            title={`CMTS column: ${e.cmts}`}
+                          >
+                            {e.cmts}
+                          </span>
+                          {e.outOfOrder && (
+                            <span className="h-[16px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[9px] font-bold inline-flex items-center">
+                              BEFORE THE STEP ABOVE
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">{e.why}</p>
+                      </div>
+                      <span
+                        className="font-mono text-[12px] font-medium whitespace-nowrap"
+                        style={{ color: e.iso ? "#0F172A" : "#CBD5E1" }}
+                      >
+                        {e.iso ? formatDate(e.iso) : "null"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Rent periods — legacy CMTS time-based rate-tier breakdown */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
                 <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
@@ -569,32 +831,36 @@ export default function GodownRentPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {RENT_PERIODS.map((p) => (
-                        <tr key={p.label} className="border-b border-[#F1F5F9] last:border-0 align-top">
+                      {voucherPeriods.map((p) => (
+                        <tr
+                          key={`${p.label}-${p.voucher ?? "free"}`}
+                          className="border-b border-[#F1F5F9] last:border-0 align-top"
+                          style={{ backgroundColor: p.band === "free" ? "#F0FDF4" : undefined }}
+                        >
                           <td className="px-3 py-2.5 whitespace-nowrap">
                             <p className="text-[12px] font-medium text-[#0F172A]">{p.label}</p>
                             <p className="text-[10px] text-[#94A3B8] mt-0.5">{p.remark}</p>
                           </td>
                           <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                            {p.from}
+                            {formatDate(p.from)}
                           </td>
                           <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                            {p.to}
+                            {formatDate(p.to)}
                           </td>
                           <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569]">{p.days}</td>
                           <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                            {p.rate}
+                            {rateLabel(p)}
                           </td>
                           <td className="px-3 py-2.5 text-[12px] whitespace-nowrap">
                             <span
                               className="h-[18px] px-1.5 rounded text-[10px] font-bold inline-flex items-center"
                               style={
-                                p.surcharge === "0%"
+                                p.surchargeLabel === "0%" || p.surchargeLabel === "—"
                                   ? { backgroundColor: "#F1F5F9", color: "#64748B" }
                                   : { backgroundColor: "#FEF3C7", color: "#D97706" }
                               }
                             >
-                              {p.surcharge}
+                              {p.surchargeLabel}
                             </span>
                           </td>
                           <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
@@ -609,8 +875,12 @@ export default function GodownRentPage() {
                           <td className="px-3 py-2.5 font-mono text-[13px] font-semibold text-[#0F172A] whitespace-nowrap">
                             {formatPkr(p.net)}
                           </td>
-                          <td className="px-3 py-2.5 font-mono text-[12px] text-[#475569] whitespace-nowrap">
-                            {p.voucher}
+                          <td className="px-3 py-2.5 font-mono text-[12px] whitespace-nowrap">
+                            {p.voucher ? (
+                              <span className="text-[#1B4F8B]">{p.voucher}</span>
+                            ) : (
+                              <span className="text-[#CBD5E1]">—</span>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-[12px] text-[#475569] whitespace-nowrap">
                             {p.user}
@@ -626,18 +896,18 @@ export default function GodownRentPage() {
                         <td className="px-3 py-2.5" />
                         <td className="px-3 py-2.5" />
                         <td className="px-3 py-2.5 font-mono text-[12px] font-semibold text-[#0F172A]">
-                          {RENT_PERIOD_TOTALS.days}
+                          {periodTotals.days}
                         </td>
                         <td className="px-3 py-2.5" />
                         <td className="px-3 py-2.5" />
                         <td className="px-3 py-2.5 font-mono text-[12px] font-semibold text-[#0F172A] whitespace-nowrap">
-                          {formatPkr(RENT_PERIOD_TOTALS.computed)}
+                          {formatPkr(periodTotals.computed)}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-[12px] font-semibold text-[#7C3AED] whitespace-nowrap">
-                          − {formatPkr(RENT_PERIOD_TOTALS.waived)}
+                          − {formatPkr(periodTotals.waived)}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-[13px] font-bold text-[#0B2545] whitespace-nowrap">
-                          {formatPkr(RENT_PERIOD_TOTALS.net)}
+                          {formatPkr(periodTotals.net)}
                         </td>
                         <td className="px-3 py-2.5" />
                         <td className="px-3 py-2.5" />
@@ -650,6 +920,22 @@ export default function GodownRentPage() {
                     Same voucher, a different axis: the zone/class/location split above answers
                     &ldquo;where was it charged&rdquo;, this rate-tier split answers &ldquo;when, and
                     at what rate&rdquo; — the view the legacy godown-rent-history screen exposed.
+                    The grace band is{" "}
+                    <span className="font-mono">
+                      {ledger?.freeDays ?? 0}d
+                    </span>{" "}
+                    because{" "}
+                    <span className="font-mono">
+                      CARGOCLASS.{awb ? cargoClass(awb.CARGOCLASSID).ABBREVATION : "—"}
+                    </span>{" "}
+                    says so — it is not a fixed &ldquo;first three days&rdquo;.
+                    {ledger && ledger.vouchers.length > 1 && (
+                      <>
+                        {" "}
+                        This AWB carries {ledger.vouchers.length} vouchers; switch the scope to{" "}
+                        <strong>By AWB</strong> to see all of them at once.
+                      </>
+                    )}
                   </p>
                 </div>
               </div>

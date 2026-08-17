@@ -282,18 +282,33 @@ export default function StorageMasterPage() {
               CMTS LOCATION (17) · capacity feeds the allocation engine
             </p>
           </div>
+          {/* Only the CMTS-backed columns carry a column name. Capacity,
+              occupancy, utilisation and the temperature band are AirVault
+              additions that the allocation engine needs and LOCATION has no
+              column for — leaving them unmarked is the distinction, and
+              inventing names for them would make the parity check unreadable. */}
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider bg-[#F8FAFC] border-b border-[#E2E8F0]">
-                  <th className="text-left px-4 py-2.5">Zone</th>
-                  <th className="text-left px-4 py-2.5">Abbr</th>
-                  <th className="text-left px-4 py-2.5">Class</th>
+                  <th className="text-left px-4 py-2.5">
+                    Zone <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">NAME</span>
+                  </th>
+                  <th className="text-left px-4 py-2.5">
+                    Abbr <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">ABBREVATION</span>
+                  </th>
+                  <th className="text-left px-4 py-2.5">
+                    Class <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">CLASSID</span>
+                  </th>
                   <th className="text-right px-4 py-2.5">Capacity</th>
                   <th className="text-right px-4 py-2.5">Occupied</th>
                   <th className="text-left px-4 py-2.5">Utilisation</th>
                   <th className="text-left px-4 py-2.5">Temp band</th>
                   <th className="text-left px-4 py-2.5">Type</th>
+                  <th className="text-left px-4 py-2.5">
+                    Handling note{" "}
+                    <span className="ml-1.5 font-mono text-[9px] text-[#CBD5E1]">REMARKS</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -331,11 +346,31 @@ export default function StorageMasterPage() {
                           </span>
                         )}
                       </td>
+                      {/* REMARKS is standing instruction attached to the zone,
+                          not to any consignment in it — so it renders on the
+                          zone row and stays on screen when the zone is empty.
+                          Most zones carry none; that blank is the real state of
+                          the column, not missing data. */}
+                      <td className="px-4 py-2.5 max-w-[240px]">
+                        {l.Remarks ? (
+                          <span className="text-[12px] text-[#0F172A]">{l.Remarks}</span>
+                        ) : (
+                          <span className="text-[12px] text-[#CBD5E1]">—</span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+          </div>
+          <div className="px-5 py-3 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+            <p className="text-[11px] text-[#64748B]">
+              REMARKS is nvarchar(500) of free text — a note the storekeeper reads, and deliberately
+              not something the allocation engine parses. The rules that bind allocation are the
+              subclass → location grid on the next tab; a handling instruction typed here changes
+              what a person does, never what the engine suggests.
+            </p>
           </div>
         </div>
       )}

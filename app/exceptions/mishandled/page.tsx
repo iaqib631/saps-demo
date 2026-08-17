@@ -18,7 +18,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, PlaneTakeoff, Route, Send, Signpost } from "lucide-react";
+import { PlaneTakeoff, Route, Send, Signpost } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
@@ -354,14 +354,6 @@ export default function MishandledPage() {
                       </span>
                     </div>
                   ))}
-                </div>
-                <div className="px-5 pb-5">
-                  <Link
-                    href="/modules"
-                    className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#7C3AED] no-underline hover:underline"
-                  >
-                    M17 on the module map <ArrowUpRight size={12} />
-                  </Link>
                 </div>
               </div>
 

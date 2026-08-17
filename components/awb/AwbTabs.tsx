@@ -151,7 +151,7 @@ export function OverviewPanel({ b }: { b: AwbBundle }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="Flight" action={{ label: "Manifest", href: "/cmts-absorption/manifest-reconciliation" }}>
+      <SectionCard title="Flight" action={{ label: "Manifest", href: "/import/manifest" }}>
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-4">
           <Field label="Flight" value={awb.FLIGHT} cmts="FLIGHT" mono />
           <Field label="Airline" value={`${awb.AIRLINECODE} — ${awb.AIRLINENAME}`} cmts="AIRLINENAME" />
@@ -371,7 +371,7 @@ export function CustomsPanel({ b }: { b: AwbBundle }) {
       <SectionCard
         title="Release gate — FC-07 Godown Rent Verification"
         subtitle="All applicable conditions must pass before a DO can issue (see BLK-10)"
-        action={{ label: "Customs queue", href: "/excise-compliance/customs-queue" }}
+        action={{ label: "Customs queue", href: "/customs/queue" }}
       >
         <div className="flex flex-col gap-2">
           {gate?.conditions.map((c) => {
@@ -450,7 +450,7 @@ export function CustomsPanel({ b }: { b: AwbBundle }) {
       )}
 
       {b.holds.length > 0 && (
-        <SectionCard title="Holds" action={{ label: "Hold register", href: "/excise-compliance/hold-register" }}>
+        <SectionCard title="Holds" action={{ label: "Hold register", href: "/exceptions/holds" }}>
           <div className="flex flex-col gap-3">
             {b.holds.map((h) => (
               <div key={h.SEQUENCE} className="rounded-xl border border-[#E2E8F0] p-4">
@@ -601,7 +601,7 @@ export function ChargesPanel({ b }: { b: AwbBundle }) {
 
       <SectionCard
         title="Components & total"
-        action={gr ? { label: "Godown rent", href: "/cmts-absorption/godown-rent-history" } : undefined}
+        action={gr ? { label: "Godown rent", href: "/billing/godown-rent" } : undefined}
       >
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-4">
           <Field label="Storage / demurrage" value={formatPkr(c.storageAmount)} cmts="DEMURRAGE" mono />
@@ -713,7 +713,20 @@ export function DispatchPanel({ b }: { b: AwbBundle }) {
                 </div>
               </div>
             </div>
-            <Field label="DO Date" value={formatDate(doRec.DODATE)} cmts="DODATE" />
+            {/* FC-01 §22 is two events, so it renders as two fields. The second of
+                them is §22a, the CHA's collection, and it lives on the DO collection
+                screen linked above rather than in this block. What renders here
+                beside the issue date is `requestedAt` — when the record was raised.
+                That is a record state and not a numbered step: FC-01 numbers no
+                request, so it has no ref of its own, and no CMTS column either — it
+                is an AirVault addition. `DODATE` is the §22 issue date and stays
+                null until the release gate passes. */}
+            <Field label="DO Requested" value={formatDate(doRec.requestedAt)} />
+            <Field
+              label="DO Issued"
+              value={doRec.DODATE ? formatDate(doRec.DODATE) : "Not yet issued"}
+              cmts="DODATE"
+            />
             <Field label="DO Type" value={doRec.DOTYPE} cmts="DOTYPE" />
             <Field label="Amount" value={formatPkr(doRec.AMOUNT)} cmts="AMOUNT" mono />
             <Field label="Tax %" value={doRec.Tax} cmts="Tax" mono />
@@ -827,7 +840,7 @@ export function MessagingPanel({ b }: { b: AwbBundle }) {
       <SectionCard
         title="IATA Cargo-IMP"
         subtitle="Auto-dispatched via SITA — every message names its triggering event"
-        action={{ label: "Message console", href: "/excise-compliance/customs-messaging" }}
+        action={{ label: "Message console", href: "/messaging/customs" }}
       >
         {b.messages.length === 0 ? (
           <p className="text-[13px] text-[#64748B]">None sent for this AWB yet.</p>
@@ -864,7 +877,7 @@ export function MessagingPanel({ b }: { b: AwbBundle }) {
       <SectionCard
         title="Customer & CHA notifications"
         subtitle="Multi-channel Email / SMS / WhatsApp with delivery and read receipts"
-        action={{ label: "Notifications", href: "/notifications-messaging" }}
+        action={{ label: "Notifications", href: "/messaging/notifications" }}
       >
         {b.notifications.length === 0 ? (
           <p className="text-[13px] text-[#64748B]">None sent for this AWB yet.</p>
@@ -930,7 +943,7 @@ export function ExceptionsPanel({ b }: { b: AwbBundle }) {
           <SectionCard
             title={`CDR — ${DISCREPANCY_LABEL[c.type]}`}
             subtitle={c.autoRaised ? "Auto-raised from declared-vs-physical variance (FC-04 amendment)" : "Raised manually"}
-            action={{ label: "Exceptions queue", href: "/warehouse-manager/exceptions-queue" }}
+            action={{ label: "CDR workbench", href: "/exceptions/cdr" }}
           >
             <div className="grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-4">
               <div className="col-span-2 md:col-span-1">

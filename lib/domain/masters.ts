@@ -7,13 +7,39 @@
  *   Cargo taxonomy     CMTS `CARGOCLASS` (16), `CARGOSUBCLASS` (17)
  *   Storage            CMTS `LOCATION` (17), `CARGOSUBCLASSLOCATION` (4)
  *   Charges            CMTS `CARGOSUBCLASSCHARGES` (15), `LOCATIONCHARGES` (10),
- *                      `CargoClassCharges` (7), `TaxType` (12)
+ *                      `CargoClassCharges` (7), `TaxType` (12), `CHARGETYPE` (7)
  *   Parties            CMTS `SHIPPER` (11), `CONSIGNEE` (13), `AGENCY` (11)
  *
  * The cargo taxonomy below is FC-03's three groups verbatim.
+ *
+ * WHERE THE MONEY LIVES — AND WHY IT IS NOT HERE
+ * ----------------------------------------------
+ * This file holds IDENTITY: what a cargo class is, which zone exists at which
+ * site, who the parties are. Every RATE it publishes — `TARIFF_SLABS`,
+ * `TAX_TYPES`, `LOCATION_CHARGES`, `CATEGORY_SURCHARGES`, `SECTION_82_DAYS`,
+ * the per-class charge columns and the per-subclass `MINCHARGES` floor — is
+ * DERIVED from `./tariff`, which is the illustrative rate card standing in for
+ * the six CMTS rate tables SAPS restored empty.
+ *
+ * The exported names and shapes are unchanged, so `./finance` and every screen
+ * read exactly what they always read. What changed is that there is now one
+ * place a number can be edited. Do not paste a rate back into this file: two
+ * homes for a rate is how a screen and an invoice come to disagree, and the
+ * whole point of the decision in `CMTS_SCOPE_DECISIONS.md` is that swapping in
+ * SAPS's real extract should be a data change in one file with no code change
+ * anywhere.
  */
 
 import type { Amount, DomainRecord, Site, SiteCode } from "./common";
+import {
+  ILLUSTRATIVE_CATEGORY_SURCHARGES,
+  ILLUSTRATIVE_TAX_TYPES,
+  LOCATION_CHARGE_BANDS,
+  SECTION_82_DAYS_ROW,
+  STANDARD_DAY_BANDS,
+  classCharges,
+  minimumChargeFor,
+} from "./tariff";
 
 /* ================================================================== *
  * Sites — FC-12 platform layer
@@ -109,33 +135,65 @@ export interface CargoClass {
   requiresSpecialClearance: boolean;
 }
 
-export const CARGO_CLASSES: CargoClass[] = [
+/**
+ * The class taxonomy — IDENTITY ONLY.
+ *
+ * The four money / allowance columns (`DOCUMENTATIONCHARGES`,
+ * `DECONSOLIDATIONCHARGES`, `SPECIALHANDLINGCHARGES` and `freeDays`) are
+ * deliberately absent here. They are joined on below from `CargoClassCharges`
+ * in `./tariff` — the illustrative rate card standing in for the empty CMTS
+ * rate tables. Splitting the row this way is what makes the eventual SAPS
+ * extract a data swap: the taxonomy stays, the numbers are replaced in one
+ * file, and no screen changes.
+ */
+const CARGO_CLASS_IDENTITY: Array<
+  Omit<
+    CargoClass,
+    "DOCUMENTATIONCHARGES" | "DECONSOLIDATIONCHARGES" | "SPECIALHANDLINGCHARGES" | "freeDays"
+  >
+> = [
   // --- FC-03 A. General / Normal ------------------------------------
-  { ID: 1, NAME: "General Cargo", DESCRIPTION: "Standard dry cargo", ABBREVATION: "GCR", DOCUMENTATIONCHARGES: 750, DECONSOLIDATIONCHARGES: 1200, SPECIALHANDLINGCHARGES: 0, group: "general", freeDays: 3, requiresSpecialClearance: false },
-  { ID: 2, NAME: "Bulky Cargo", DESCRIPTION: "Air freight unit / oversized", ABBREVATION: "AFU", DOCUMENTATIONCHARGES: 750, DECONSOLIDATIONCHARGES: 1800, SPECIALHANDLINGCHARGES: 2500, group: "general", freeDays: 3, requiresSpecialClearance: false },
-  { ID: 3, NAME: "Immediate Clearance Goods", DESCRIPTION: "Priority release", ABBREVATION: "ICG", DOCUMENTATIONCHARGES: 900, DECONSOLIDATIONCHARGES: 1200, SPECIALHANDLINGCHARGES: 0, group: "general", freeDays: 2, requiresSpecialClearance: false },
-  { ID: 4, NAME: "Unaccompanied Baggage", DESCRIPTION: "Passenger baggage shipped separately", ABBREVATION: "UAB", DOCUMENTATIONCHARGES: 500, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "general", freeDays: 5, requiresSpecialClearance: false },
+  { ID: 1, NAME: "General Cargo", DESCRIPTION: "Standard dry cargo", ABBREVATION: "GCR", group: "general", requiresSpecialClearance: false },
+  { ID: 2, NAME: "Bulky Cargo", DESCRIPTION: "Air freight unit / oversized", ABBREVATION: "AFU", group: "general", requiresSpecialClearance: false },
+  { ID: 3, NAME: "Immediate Clearance Goods", DESCRIPTION: "Priority release", ABBREVATION: "ICG", group: "general", requiresSpecialClearance: false },
+  { ID: 4, NAME: "Unaccompanied Baggage", DESCRIPTION: "Passenger baggage shipped separately", ABBREVATION: "UAB", group: "general", requiresSpecialClearance: false },
 
   // --- FC-03 B. Special Handling ------------------------------------
-  { ID: 5, NAME: "Dangerous Goods", DESCRIPTION: "IATA DGR-regulated", ABBREVATION: "DGR", DOCUMENTATIONCHARGES: 1500, DECONSOLIDATIONCHARGES: 2400, SPECIALHANDLINGCHARGES: 6500, group: "special", freeDays: 2, requiresSpecialClearance: true },
-  { ID: 6, NAME: "Perishables", DESCRIPTION: "Temperature-sensitive", ABBREVATION: "PER", DOCUMENTATIONCHARGES: 1200, DECONSOLIDATIONCHARGES: 1800, SPECIALHANDLINGCHARGES: 4500, group: "special", freeDays: 1, requiresSpecialClearance: true },
-  { ID: 7, NAME: "Valuable Cargo", DESCRIPTION: "High-value / bullion", ABBREVATION: "VAL", DOCUMENTATIONCHARGES: 2000, DECONSOLIDATIONCHARGES: 2400, SPECIALHANDLINGCHARGES: 8500, group: "special", freeDays: 1, requiresSpecialClearance: true },
-  { ID: 8, NAME: "Live Animals", DESCRIPTION: "IATA LAR-regulated", ABBREVATION: "AVI", DOCUMENTATIONCHARGES: 1500, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 7500, group: "special", freeDays: 1, requiresSpecialClearance: true },
-  { ID: 9, NAME: "Human Remains", DESCRIPTION: "Repatriation", ABBREVATION: "HUM", DOCUMENTATIONCHARGES: 0, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "special", freeDays: 3, requiresSpecialClearance: true },
-  { ID: 10, NAME: "Aircraft on Ground Spares", DESCRIPTION: "AOG priority spares", ABBREVATION: "AOG", DOCUMENTATIONCHARGES: 1200, DECONSOLIDATIONCHARGES: 1200, SPECIALHANDLINGCHARGES: 3500, group: "special", freeDays: 1, requiresSpecialClearance: false },
-  { ID: 11, NAME: "Diplomatic Cargo", DESCRIPTION: "Diplomatic bag / mission cargo", ABBREVATION: "DIP", DOCUMENTATIONCHARGES: 0, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "special", freeDays: 7, requiresSpecialClearance: true },
-  { ID: 12, NAME: "Vulnerable Cargo", DESCRIPTION: "High-risk / theft-prone", ABBREVATION: "VUN", DOCUMENTATIONCHARGES: 1500, DECONSOLIDATIONCHARGES: 1800, SPECIALHANDLINGCHARGES: 5500, group: "special", freeDays: 2, requiresSpecialClearance: true },
-  { ID: 13, NAME: "Pharmaceuticals", DESCRIPTION: "GDP-compliant pharma", ABBREVATION: "PHR", DOCUMENTATIONCHARGES: 1500, DECONSOLIDATIONCHARGES: 1800, SPECIALHANDLINGCHARGES: 5500, group: "special", freeDays: 1, requiresSpecialClearance: true },
+  { ID: 5, NAME: "Dangerous Goods", DESCRIPTION: "IATA DGR-regulated", ABBREVATION: "DGR", group: "special", requiresSpecialClearance: true },
+  { ID: 6, NAME: "Perishables", DESCRIPTION: "Temperature-sensitive", ABBREVATION: "PER", group: "special", requiresSpecialClearance: true },
+  { ID: 7, NAME: "Valuable Cargo", DESCRIPTION: "High-value / bullion", ABBREVATION: "VAL", group: "special", requiresSpecialClearance: true },
+  { ID: 8, NAME: "Live Animals", DESCRIPTION: "IATA LAR-regulated", ABBREVATION: "AVI", group: "special", requiresSpecialClearance: true },
+  { ID: 9, NAME: "Human Remains", DESCRIPTION: "Repatriation", ABBREVATION: "HUM", group: "special", requiresSpecialClearance: true },
+  { ID: 10, NAME: "Aircraft on Ground Spares", DESCRIPTION: "AOG priority spares", ABBREVATION: "AOG", group: "special", requiresSpecialClearance: false },
+  { ID: 11, NAME: "Diplomatic Cargo", DESCRIPTION: "Diplomatic bag / mission cargo", ABBREVATION: "DIP", group: "special", requiresSpecialClearance: true },
+  { ID: 12, NAME: "Vulnerable Cargo", DESCRIPTION: "High-risk / theft-prone", ABBREVATION: "VUN", group: "special", requiresSpecialClearance: true },
+  { ID: 13, NAME: "Pharmaceuticals", DESCRIPTION: "GDP-compliant pharma", ABBREVATION: "PHR", group: "special", requiresSpecialClearance: true },
 
   // --- FC-03 C. Controlled / Exception ------------------------------
-  { ID: 14, NAME: "Airline Bonded Cargo", DESCRIPTION: "Under airline bond", ABBREVATION: "BND", DOCUMENTATIONCHARGES: 900, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "controlled", freeDays: 3, requiresSpecialClearance: true },
-  { ID: 15, NAME: "Transfer Cargo", DESCRIPTION: "Transhipment / transit", ABBREVATION: "TRF", DOCUMENTATIONCHARGES: 900, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "controlled", freeDays: 5, requiresSpecialClearance: true },
-  { ID: 16, NAME: "Customs Hold", DESCRIPTION: "Detained by customs", ABBREVATION: "CDT", DOCUMENTATIONCHARGES: 0, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "controlled", freeDays: 0, requiresSpecialClearance: true },
-  { ID: 17, NAME: "Discrepancy Cargo", DESCRIPTION: "CDR / OSD hold", ABBREVATION: "CDR", DOCUMENTATIONCHARGES: 0, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "controlled", freeDays: 0, requiresSpecialClearance: true },
-  { ID: 18, NAME: "Mishandled Cargo", DESCRIPTION: "Misrouted / offloaded in error", ABBREVATION: "MSH", DOCUMENTATIONCHARGES: 0, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "controlled", freeDays: 0, requiresSpecialClearance: true },
-  { ID: 19, NAME: "Re-export Cargo", DESCRIPTION: "Awaiting re-export", ABBREVATION: "REX", DOCUMENTATIONCHARGES: 1200, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "controlled", freeDays: 0, requiresSpecialClearance: true },
-  { ID: 20, NAME: "Long-stay Cargo", DESCRIPTION: "Section 82 / auction / disposal", ABBREVATION: "LST", DOCUMENTATIONCHARGES: 0, DECONSOLIDATIONCHARGES: 0, SPECIALHANDLINGCHARGES: 0, group: "controlled", freeDays: 0, requiresSpecialClearance: true },
+  { ID: 14, NAME: "Airline Bonded Cargo", DESCRIPTION: "Under airline bond", ABBREVATION: "BND", group: "controlled", requiresSpecialClearance: true },
+  { ID: 15, NAME: "Transfer Cargo", DESCRIPTION: "Transhipment / transit", ABBREVATION: "TRF", group: "controlled", requiresSpecialClearance: true },
+  { ID: 16, NAME: "Customs Hold", DESCRIPTION: "Detained by customs", ABBREVATION: "CDT", group: "controlled", requiresSpecialClearance: true },
+  { ID: 17, NAME: "Discrepancy Cargo", DESCRIPTION: "CDR / OSD hold", ABBREVATION: "CDR", group: "controlled", requiresSpecialClearance: true },
+  { ID: 18, NAME: "Mishandled Cargo", DESCRIPTION: "Misrouted / offloaded in error", ABBREVATION: "MSH", group: "controlled", requiresSpecialClearance: true },
+  { ID: 19, NAME: "Re-export Cargo", DESCRIPTION: "Awaiting re-export", ABBREVATION: "REX", group: "controlled", requiresSpecialClearance: true },
+  { ID: 20, NAME: "Long-stay Cargo", DESCRIPTION: "Section 82 / auction / disposal", ABBREVATION: "LST", group: "controlled", requiresSpecialClearance: true },
 ];
+
+/**
+ * Identity joined to the rate card. `classCharges()` throws on a class the
+ * card does not price, which is the right failure: a cargo class with no fees
+ * would otherwise bill zero and look deliberate.
+ */
+export const CARGO_CLASSES: CargoClass[] = CARGO_CLASS_IDENTITY.map((c) => {
+  const rates = classCharges(c.ID);
+  return {
+    ...c,
+    DOCUMENTATIONCHARGES: rates.DOCUMENTATIONCHARGES,
+    DECONSOLIDATIONCHARGES: rates.DECONSOLIDATIONCHARGES,
+    SPECIALHANDLINGCHARGES: rates.SPECIALHANDLINGCHARGES,
+    freeDays: rates.FREEDAYS,
+  };
+});
 
 /** CMTS `CARGOSUBCLASS` */
 export interface CargoSubClass {
@@ -146,7 +204,12 @@ export interface CargoSubClass {
   NAME: string;
   DESCRIPTION: string;
   ABBREVATION: string;
-  /** CMTS `MINCHARGES` */
+  /**
+   * CMTS `MINCHARGES` float — the minimum chargeable amount for the subclass.
+   * It is a floor, not a line item: FC-07 bills the computed storage total or
+   * this, whichever is greater, which is why a zero here (HUM, DIP, and the
+   * customs-held subclasses) means "no floor", not "free".
+   */
   MINCHARGES: Amount;
   /** CMTS `Authority` */
   Authority: string | null;
@@ -156,43 +219,55 @@ export interface CargoSubClass {
   tempBandC?: [number, number];
 }
 
-export const CARGO_SUBCLASSES: CargoSubClass[] = [
+/**
+ * Subclass identity — everything except the money.
+ *
+ * `MINCHARGES` is joined on from `./tariff` for the same reason the class fees
+ * are: it is a rate, and rates have exactly one home. See the note at the top
+ * of this file.
+ */
+const CARGO_SUBCLASS_IDENTITY: Array<Omit<CargoSubClass, "MINCHARGES">> = [
   // GCR
-  { SUBCLASSID: 101, CLASSID: 1, NAME: "General — Palletised", DESCRIPTION: "Palletised dry cargo", ABBREVATION: "GCR-P", MINCHARGES: 1500, Authority: null, Remarks: null },
-  { SUBCLASSID: 102, CLASSID: 1, NAME: "General — Loose", DESCRIPTION: "Loose dry cargo", ABBREVATION: "GCR-L", MINCHARGES: 1200, Authority: null, Remarks: null },
+  { SUBCLASSID: 101, CLASSID: 1, NAME: "General — Palletised", DESCRIPTION: "Palletised dry cargo", ABBREVATION: "GCR-P", Authority: null, Remarks: null },
+  { SUBCLASSID: 102, CLASSID: 1, NAME: "General — Loose", DESCRIPTION: "Loose dry cargo", ABBREVATION: "GCR-L", Authority: null, Remarks: null },
   // AFU
-  { SUBCLASSID: 103, CLASSID: 2, NAME: "Bulky — Heavy Lift", DESCRIPTION: "Requires forklift / crane", ABBREVATION: "AFU-H", MINCHARGES: 4500, Authority: "Warehouse Manager", Remarks: "Forklift charges apply" },
-  { SUBCLASSID: 104, CLASSID: 2, NAME: "Bulky — Oversize", DESCRIPTION: "Exceeds standard rack envelope", ABBREVATION: "AFU-O", MINCHARGES: 3500, Authority: "Warehouse Manager", Remarks: null },
+  { SUBCLASSID: 103, CLASSID: 2, NAME: "Bulky — Heavy Lift", DESCRIPTION: "Requires forklift / crane", ABBREVATION: "AFU-H", Authority: "Warehouse Manager", Remarks: "Forklift charges apply" },
+  { SUBCLASSID: 104, CLASSID: 2, NAME: "Bulky — Oversize", DESCRIPTION: "Exceeds standard rack envelope", ABBREVATION: "AFU-O", Authority: "Warehouse Manager", Remarks: null },
   // ICG
-  { SUBCLASSID: 105, CLASSID: 3, NAME: "Immediate Clearance", DESCRIPTION: "Priority release goods", ABBREVATION: "ICG", MINCHARGES: 2000, Authority: null, Remarks: null },
+  { SUBCLASSID: 105, CLASSID: 3, NAME: "Immediate Clearance", DESCRIPTION: "Priority release goods", ABBREVATION: "ICG", Authority: null, Remarks: null },
   // UAB
-  { SUBCLASSID: 106, CLASSID: 4, NAME: "Unaccompanied Baggage", DESCRIPTION: "Passenger baggage", ABBREVATION: "UAB", MINCHARGES: 800, Authority: null, Remarks: null },
+  { SUBCLASSID: 106, CLASSID: 4, NAME: "Unaccompanied Baggage", DESCRIPTION: "Passenger baggage", ABBREVATION: "UAB", Authority: null, Remarks: null },
   // DGR
-  { SUBCLASSID: 107, CLASSID: 5, NAME: "DGR — Class 3 Flammable", DESCRIPTION: "Flammable liquids", ABBREVATION: "DGR-3", MINCHARGES: 8500, Authority: "DGR Certified Officer", Remarks: "Segregated store only" },
-  { SUBCLASSID: 108, CLASSID: 5, NAME: "DGR — Class 8 Corrosive", DESCRIPTION: "Corrosive substances", ABBREVATION: "DGR-8", MINCHARGES: 8500, Authority: "DGR Certified Officer", Remarks: "Segregated store only" },
-  { SUBCLASSID: 109, CLASSID: 5, NAME: "DGR — Class 9 Misc", DESCRIPTION: "Lithium batteries etc.", ABBREVATION: "DGR-9", MINCHARGES: 7500, Authority: "DGR Certified Officer", Remarks: null },
+  { SUBCLASSID: 107, CLASSID: 5, NAME: "DGR — Class 3 Flammable", DESCRIPTION: "Flammable liquids", ABBREVATION: "DGR-3", Authority: "DGR Certified Officer", Remarks: "Segregated store only" },
+  { SUBCLASSID: 108, CLASSID: 5, NAME: "DGR — Class 8 Corrosive", DESCRIPTION: "Corrosive substances", ABBREVATION: "DGR-8", Authority: "DGR Certified Officer", Remarks: "Segregated store only" },
+  { SUBCLASSID: 109, CLASSID: 5, NAME: "DGR — Class 9 Misc", DESCRIPTION: "Lithium batteries etc.", ABBREVATION: "DGR-9", Authority: "DGR Certified Officer", Remarks: null },
   // PER — FC-03 B lists four cold-chain regimes under Cold Chain Storage
-  { SUBCLASSID: 110, CLASSID: 6, NAME: "COL — Cool Room", DESCRIPTION: "Cool room +2 to +8 C", ABBREVATION: "COL", MINCHARGES: 5500, Authority: "Cold Chain Officer", Remarks: null, tempBandC: [2, 8] },
-  { SUBCLASSID: 111, CLASSID: 6, NAME: "CRT — Controlled Room Temp", DESCRIPTION: "Controlled room temperature +15 to +25 C", ABBREVATION: "CRT", MINCHARGES: 4500, Authority: "Cold Chain Officer", Remarks: null, tempBandC: [15, 25] },
-  { SUBCLASSID: 112, CLASSID: 6, NAME: "ERT — Extended Room Temp", DESCRIPTION: "Extended room temperature +2 to +25 C", ABBREVATION: "ERT", MINCHARGES: 4000, Authority: "Cold Chain Officer", Remarks: null, tempBandC: [2, 25] },
-  { SUBCLASSID: 113, CLASSID: 6, NAME: "FRO — Frozen Room", DESCRIPTION: "Frozen -20 to -15 C", ABBREVATION: "FRO", MINCHARGES: 7500, Authority: "Cold Chain Officer", Remarks: null, tempBandC: [-20, -15] },
+  { SUBCLASSID: 110, CLASSID: 6, NAME: "COL — Cool Room", DESCRIPTION: "Cool room +2 to +8 C", ABBREVATION: "COL", Authority: "Cold Chain Officer", Remarks: null, tempBandC: [2, 8] },
+  { SUBCLASSID: 111, CLASSID: 6, NAME: "CRT — Controlled Room Temp", DESCRIPTION: "Controlled room temperature +15 to +25 C", ABBREVATION: "CRT", Authority: "Cold Chain Officer", Remarks: null, tempBandC: [15, 25] },
+  { SUBCLASSID: 112, CLASSID: 6, NAME: "ERT — Extended Room Temp", DESCRIPTION: "Extended room temperature +2 to +25 C", ABBREVATION: "ERT", Authority: "Cold Chain Officer", Remarks: null, tempBandC: [2, 25] },
+  { SUBCLASSID: 113, CLASSID: 6, NAME: "FRO — Frozen Room", DESCRIPTION: "Frozen -20 to -15 C", ABBREVATION: "FRO", Authority: "Cold Chain Officer", Remarks: null, tempBandC: [-20, -15] },
   // VAL / AVI / HUM / AOG / DIP / VUN / PHR
-  { SUBCLASSID: 114, CLASSID: 7, NAME: "Valuable — Vault", DESCRIPTION: "Strong room storage", ABBREVATION: "VAL-V", MINCHARGES: 12000, Authority: "Security Manager", Remarks: "Dual custody required" },
-  { SUBCLASSID: 115, CLASSID: 8, NAME: "Live Animals", DESCRIPTION: "Climate-controlled animal area", ABBREVATION: "AVI", MINCHARGES: 9500, Authority: "Veterinary Officer", Remarks: null, tempBandC: [15, 25] },
-  { SUBCLASSID: 116, CLASSID: 9, NAME: "Human Remains", DESCRIPTION: "Special handling area", ABBREVATION: "HUM", MINCHARGES: 0, Authority: "Duty Manager", Remarks: "No charge — welfare" },
-  { SUBCLASSID: 117, CLASSID: 10, NAME: "AOG Spares", DESCRIPTION: "Priority AOG zone", ABBREVATION: "AOG", MINCHARGES: 4500, Authority: null, Remarks: null },
-  { SUBCLASSID: 118, CLASSID: 11, NAME: "Diplomatic", DESCRIPTION: "Controlled access area", ABBREVATION: "DIP", MINCHARGES: 0, Authority: "Duty Manager", Remarks: "Sealed — not to be opened" },
-  { SUBCLASSID: 119, CLASSID: 12, NAME: "Vulnerable", DESCRIPTION: "Secure / high-risk area", ABBREVATION: "VUN", MINCHARGES: 6500, Authority: "Security Manager", Remarks: null },
-  { SUBCLASSID: 120, CLASSID: 13, NAME: "Pharma — GDP", DESCRIPTION: "GDP-compliant pharma storage", ABBREVATION: "PHR", MINCHARGES: 6500, Authority: "Cold Chain Officer", Remarks: null, tempBandC: [2, 8] },
+  { SUBCLASSID: 114, CLASSID: 7, NAME: "Valuable — Vault", DESCRIPTION: "Strong room storage", ABBREVATION: "VAL-V", Authority: "Security Manager", Remarks: "Dual custody required" },
+  { SUBCLASSID: 115, CLASSID: 8, NAME: "Live Animals", DESCRIPTION: "Climate-controlled animal area", ABBREVATION: "AVI", Authority: "Veterinary Officer", Remarks: null, tempBandC: [15, 25] },
+  { SUBCLASSID: 116, CLASSID: 9, NAME: "Human Remains", DESCRIPTION: "Special handling area", ABBREVATION: "HUM", Authority: "Duty Manager", Remarks: "No charge — welfare" },
+  { SUBCLASSID: 117, CLASSID: 10, NAME: "AOG Spares", DESCRIPTION: "Priority AOG zone", ABBREVATION: "AOG", Authority: null, Remarks: null },
+  { SUBCLASSID: 118, CLASSID: 11, NAME: "Diplomatic", DESCRIPTION: "Controlled access area", ABBREVATION: "DIP", Authority: "Duty Manager", Remarks: "Sealed — not to be opened" },
+  { SUBCLASSID: 119, CLASSID: 12, NAME: "Vulnerable", DESCRIPTION: "Secure / high-risk area", ABBREVATION: "VUN", Authority: "Security Manager", Remarks: null },
+  { SUBCLASSID: 120, CLASSID: 13, NAME: "Pharma — GDP", DESCRIPTION: "GDP-compliant pharma storage", ABBREVATION: "PHR", Authority: "Cold Chain Officer", Remarks: null, tempBandC: [2, 8] },
   // Controlled / exception
-  { SUBCLASSID: 121, CLASSID: 14, NAME: "Airline Bonded", DESCRIPTION: "Bonded storage", ABBREVATION: "BND", MINCHARGES: 2500, Authority: "Customs Officer", Remarks: null },
-  { SUBCLASSID: 122, CLASSID: 15, NAME: "Transhipment", DESCRIPTION: "Bonded transhipment zone", ABBREVATION: "TRF", MINCHARGES: 2500, Authority: "Customs Officer", Remarks: "Does not enter local consumption" },
-  { SUBCLASSID: 123, CLASSID: 16, NAME: "Customs Detained", DESCRIPTION: "Customs detained area", ABBREVATION: "CDT", MINCHARGES: 0, Authority: "Customs Officer", Remarks: null },
-  { SUBCLASSID: 124, CLASSID: 17, NAME: "CDR / OSD Hold", DESCRIPTION: "Discrepancy hold", ABBREVATION: "CDR", MINCHARGES: 0, Authority: "Duty Manager", Remarks: null },
-  { SUBCLASSID: 125, CLASSID: 18, NAME: "Exception / Quarantine", DESCRIPTION: "Mishandled cargo hold", ABBREVATION: "MSH", MINCHARGES: 0, Authority: "Duty Manager", Remarks: null },
-  { SUBCLASSID: 126, CLASSID: 19, NAME: "Re-export Holding", DESCRIPTION: "Awaiting re-export", ABBREVATION: "REX", MINCHARGES: 2500, Authority: "Customs Officer", Remarks: null },
-  { SUBCLASSID: 127, CLASSID: 20, NAME: "Auction / Disposal", DESCRIPTION: "Section 82 pipeline", ABBREVATION: "LST", MINCHARGES: 0, Authority: "Customs Officer", Remarks: null },
+  { SUBCLASSID: 121, CLASSID: 14, NAME: "Airline Bonded", DESCRIPTION: "Bonded storage", ABBREVATION: "BND", Authority: "Customs Officer", Remarks: null },
+  { SUBCLASSID: 122, CLASSID: 15, NAME: "Transhipment", DESCRIPTION: "Bonded transhipment zone", ABBREVATION: "TRF", Authority: "Customs Officer", Remarks: "Does not enter local consumption" },
+  { SUBCLASSID: 123, CLASSID: 16, NAME: "Customs Detained", DESCRIPTION: "Customs detained area", ABBREVATION: "CDT", Authority: "Customs Officer", Remarks: null },
+  { SUBCLASSID: 124, CLASSID: 17, NAME: "CDR / OSD Hold", DESCRIPTION: "Discrepancy hold", ABBREVATION: "CDR", Authority: "Duty Manager", Remarks: null },
+  { SUBCLASSID: 125, CLASSID: 18, NAME: "Exception / Quarantine", DESCRIPTION: "Mishandled cargo hold", ABBREVATION: "MSH", Authority: "Duty Manager", Remarks: null },
+  { SUBCLASSID: 126, CLASSID: 19, NAME: "Re-export Holding", DESCRIPTION: "Awaiting re-export", ABBREVATION: "REX", Authority: "Customs Officer", Remarks: null },
+  { SUBCLASSID: 127, CLASSID: 20, NAME: "Auction / Disposal", DESCRIPTION: "Section 82 pipeline", ABBREVATION: "LST", Authority: "Customs Officer", Remarks: null },
 ];
+
+export const CARGO_SUBCLASSES: CargoSubClass[] = CARGO_SUBCLASS_IDENTITY.map((s) => ({
+  ...s,
+  MINCHARGES: minimumChargeFor(s.SUBCLASSID),
+}));
 
 /* ================================================================== *
  * Storage locations — FC-03 zone targets
@@ -208,6 +283,22 @@ export interface StorageLocation {
   ABBREVATION: string;
   DESCRIPTION: string;
   Authority: string | null;
+  /**
+   * CMTS `LOCATION.Remarks` nvarchar(500) — the zone's standing handling note.
+   *
+   * Spelled mixed-case because that is how the source spells it. This field
+   * previously read `REMARKS`, changed on the stated grounds that "LOCATION
+   * spells it REMARKS in the source schema". That claim was wrong, and checking
+   * it is one query: across the 105 CMTS tables the column appears sixteen
+   * times, nine uppercase (AWBINFORMATION, HOLDINGSTATUS, INTERNATIONALCARGO …)
+   * and seven mixed-case — and LOCATION is in the second group, `nvarchar(500)`,
+   * the very type the old comment cited. Right column, wrong casing.
+   *
+   * The casing genuinely does carry meaning here, which is exactly why it has to
+   * be measured against the OWNING table rather than against whether the
+   * uppercase form exists somewhere in the schema. It does exist — nine times —
+   * just never on this table.
+   */
   Remarks: string | null;
   /** Capacity in chargeable kg — the allocation engine checks against this. */
   capacityKg: number;
@@ -280,7 +371,19 @@ export interface SubClassLocationRule {
 export const SUBCLASS_LOCATION_RULES: SubClassLocationRule[] = (() => {
   const rules: SubClassLocationRule[] = [];
   let id = 1;
-  /** FC-03 doesn't draw overflow targets, so these are proposals for sign-off. */
+  /**
+   * FC-03 doesn't draw overflow targets, so these are proposals for sign-off.
+   *
+   * ONE ENTRY IS NOT A PROPOSAL — it is the guarantee that makes FC-03 true:
+   * pharma (13) overflows ONLY to cold chain (6), and cold chain overflows
+   * back to pharma. Class 5 (Dangerous Goods, DGR-SEG) is never a pharma
+   * target and must never become one. `allocationCandidates` reads nothing
+   * but this map and the preferred zone, so adding `13: 5` here — or any
+   * chain that reaches 5 from 13 — is all it would take to route a pharma
+   * consignment into the segregated store, which is unrefrigerated and under
+   * a DGR officer rather than the Cold Chain Officer. The classifier enforces
+   * the same rule at the other end (proposeClassification in storage.ts).
+   */
   const OVERFLOW: Record<number, number> = { 1: 2, 2: 1, 3: 1, 4: 1, 13: 6, 6: 13, 12: 7 };
   for (const s of SITES) {
     for (const sub of CARGO_SUBCLASSES) {
@@ -309,7 +412,21 @@ export interface Airline extends DomainRecord {
   ID: number;
   /** CMTS `AIRLINEID` — IATA code. */
   AIRLINEID: string;
+  /**
+   * CMTS `ABBREVATION` varchar(15) — the carrier short name printed on manifests
+   * and vouchers. Wider than `AIRLINEID` because legacy allows a house
+   * abbreviation that is not the IATA code; the demo data happens to match, so a
+   * screen must still read this column rather than reusing `AIRLINEID`.
+   */
   ABBREVATION: string;
+  /**
+   * CMTS `LOGO` varchar(200) — a server-relative path into the legacy CMTS image
+   * share, NOT a URL and NOT the image itself. AirVault has no asset store, so
+   * this is an opaque migration string: render it as text, never as an `<img>`
+   * src, or the screen will show a broken image for every carrier. NULL is
+   * normal — legacy never required a logo on file.
+   */
+  LOGO: string | null;
   DESCRIPTION: string;
   /** CMTS `COUNTRY` */
   COUNTRY: string;
@@ -335,14 +452,15 @@ const AUDIT = {
 const KHI_KEYS = { CityId: 1, Comp_Code: 1, Off_Code: 1 } as const;
 
 export const AIRLINES: Airline[] = [
-  { ...AUDIT, ...KHI_KEYS, ID: 1, AIRLINEID: "EK", ABBREVATION: "EK", DESCRIPTION: "Emirates", COUNTRY: "United Arab Emirates", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 2, AIRLINEID: "QR", ABBREVATION: "QR", DESCRIPTION: "Qatar Airways", COUNTRY: "Qatar", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 3, AIRLINEID: "EY", ABBREVATION: "EY", DESCRIPTION: "Etihad Airways", COUNTRY: "United Arab Emirates", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 4, AIRLINEID: "TK", ABBREVATION: "TK", DESCRIPTION: "Turkish Airlines", COUNTRY: "Türkiye", DOBYSAPS: false, DOAMOUNT: 4000, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 5, AIRLINEID: "PK", ABBREVATION: "PK", DESCRIPTION: "Pakistan International Airlines", COUNTRY: "Pakistan", DOBYSAPS: true, DOAMOUNT: 2500, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 6, AIRLINEID: "SV", ABBREVATION: "SV", DESCRIPTION: "Saudia", COUNTRY: "Saudi Arabia", DOBYSAPS: true, DOAMOUNT: 3200, SCHEDULED: true, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 7, AIRLINEID: "CV", ABBREVATION: "CV", DESCRIPTION: "Cargolux", COUNTRY: "Luxembourg", DOBYSAPS: false, DOAMOUNT: 4500, SCHEDULED: false, APPROVEDBYIATA: true },
-  { ...AUDIT, ...KHI_KEYS, ID: 8, AIRLINEID: "PA", ABBREVATION: "PA", DESCRIPTION: "Airblue", COUNTRY: "Pakistan", DOBYSAPS: true, DOAMOUNT: 2200, SCHEDULED: true, APPROVEDBYIATA: false },
+  { ...AUDIT, ...KHI_KEYS, ID: 1, AIRLINEID: "EK", ABBREVATION: "EK", LOGO: "~/Images/AirlineLogos/EK.gif", DESCRIPTION: "Emirates", COUNTRY: "United Arab Emirates", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 2, AIRLINEID: "QR", ABBREVATION: "QR", LOGO: "~/Images/AirlineLogos/QR.gif", DESCRIPTION: "Qatar Airways", COUNTRY: "Qatar", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 3, AIRLINEID: "EY", ABBREVATION: "EY", LOGO: "~/Images/AirlineLogos/EY.gif", DESCRIPTION: "Etihad Airways", COUNTRY: "United Arab Emirates", DOBYSAPS: true, DOAMOUNT: 3500, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 4, AIRLINEID: "TK", ABBREVATION: "TK", LOGO: "~/Images/AirlineLogos/TK.gif", DESCRIPTION: "Turkish Airlines", COUNTRY: "Türkiye", DOBYSAPS: false, DOAMOUNT: 4000, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 5, AIRLINEID: "PK", ABBREVATION: "PK", LOGO: "~/Images/AirlineLogos/PK.gif", DESCRIPTION: "Pakistan International Airlines", COUNTRY: "Pakistan", DOBYSAPS: true, DOAMOUNT: 2500, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 6, AIRLINEID: "SV", ABBREVATION: "SV", LOGO: "~/Images/AirlineLogos/SV.gif", DESCRIPTION: "Saudia", COUNTRY: "Saudi Arabia", DOBYSAPS: true, DOAMOUNT: 3200, SCHEDULED: true, APPROVEDBYIATA: true },
+  { ...AUDIT, ...KHI_KEYS, ID: 7, AIRLINEID: "CV", ABBREVATION: "CV", LOGO: "~/Images/AirlineLogos/CV.gif", DESCRIPTION: "Cargolux", COUNTRY: "Luxembourg", DOBYSAPS: false, DOAMOUNT: 4500, SCHEDULED: false, APPROVEDBYIATA: true },
+  // No logo on file — the empty state is real in CMTS, so the demo carries one.
+  { ...AUDIT, ...KHI_KEYS, ID: 8, AIRLINEID: "PA", ABBREVATION: "PA", LOGO: null, DESCRIPTION: "Airblue", COUNTRY: "Pakistan", DOBYSAPS: true, DOAMOUNT: 2200, SCHEDULED: true, APPROVEDBYIATA: false },
 ];
 
 /** CMTS `AIRPORT` + `Flight_Airport` */
@@ -416,7 +534,7 @@ export const PARTIES: Party[] = [
 ];
 
 /* ================================================================== *
- * Tariff — CMTS `CARGOSUBCLASSCHARGES`, `LOCATIONCHARGES`, `TaxType`
+ * Tariff — CMTS `CARGOSUBCLASSCHARGES`, `LOCATIONCHARGES`, `TaxType`, `CHARGETYPE`
  * ================================================================== */
 
 /** FC-07 §08 — "Slabs: Day 1-3 Free | Day 4-7 | Day 8-14 | Day 15+ Charges" */
@@ -430,12 +548,34 @@ export interface TariffSlab {
   ratePerKgPerDay: Amount;
 }
 
-export const TARIFF_SLABS: TariffSlab[] = [
-  { DAYFROM: 1, DAYTO: 3, label: "Day 1–3 (free)", ratePerKgPerDay: 0 },
-  { DAYFROM: 4, DAYTO: 7, label: "Day 4–7", ratePerKgPerDay: 35 },
-  { DAYFROM: 8, DAYTO: 14, label: "Day 8–14", ratePerKgPerDay: 50 },
-  { DAYFROM: 15, DAYTO: null, label: "Day 15+", ratePerKgPerDay: 75 },
-];
+/**
+ * The band set `slabBreakdown()` prices EVERY consignment on.
+ *
+ * ILLUSTRATIVE — read from the rate card in `./tariff`, which derives it from
+ * `CARGOSUBCLASSCHARGES` for general palletised cargo in the light weight band.
+ * The four bands (0 / 35 / 50 / 75) are unchanged from the pre-decision
+ * fixture: re-homing the rates deliberately did not re-price the demo.
+ *
+ * Two things a reader should know before quoting this table:
+ *
+ *   • CMTS selects the band set by subclass, location AND weight band
+ *     (CMTS_SCHEMA_AUDIT §3.2/§3.3). `finance.ts` reads this one constant, so
+ *     the selection is not implemented. The card carries the full matrix and
+ *     `resolveChargeInputs()` reports when the engine will price a consignment
+ *     on a band set the card did not select for it.
+ *   • The leading zero band and `cargoClass.freeDays` BOTH express the free
+ *     period, and `calculateCharges()` applies them in series — it subtracts
+ *     the free days, then walks these bands from day 1 — so the grace period
+ *     is currently granted twice. That is an engine defect, not a card defect;
+ *     it under-bills, which is the visible direction, and the tariff screen
+ *     names it rather than quietly compensating for it here.
+ */
+export const TARIFF_SLABS: TariffSlab[] = STANDARD_DAY_BANDS.map((b) => ({
+  DAYFROM: b.DAYFROM,
+  DAYTO: b.DAYTO,
+  label: b.label,
+  ratePerKgPerDay: b.ratePerKgPerDay,
+}));
 
 /** FC-07 §07 — "Surcharge chips: DGR, PER, VAL, AVI, AOG, HUM, Cold, Vault, Special" */
 export interface CategorySurcharge {
@@ -447,17 +587,10 @@ export interface CategorySurcharge {
   percent: number;
 }
 
-export const CATEGORY_SURCHARGES: CategorySurcharge[] = [
-  { code: "DGR", label: "Dangerous goods", classIds: [5], percent: 40 },
-  { code: "PER", label: "Perishable", classIds: [6], percent: 25 },
-  { code: "VAL", label: "Valuable", classIds: [7], percent: 60 },
-  { code: "AVI", label: "Live animals", classIds: [8], percent: 45 },
-  { code: "AOG", label: "Aircraft on ground", classIds: [10], percent: 20 },
-  { code: "HUM", label: "Human remains", classIds: [9], percent: 0 },
-  { code: "COLD", label: "Cold chain", classIds: [6, 13], percent: 30 },
-  { code: "VAULT", label: "Vault storage", classIds: [7], percent: 35 },
-  { code: "SPECIAL", label: "Special handling", classIds: [11, 12], percent: 25 },
-];
+/** ILLUSTRATIVE — the percentages live on the rate card in `./tariff`. */
+export const CATEGORY_SURCHARGES: CategorySurcharge[] = ILLUSTRATIVE_CATEGORY_SURCHARGES.map(
+  (s) => ({ code: s.code, label: s.label, classIds: s.classIds, percent: s.percent }),
+);
 
 /** CMTS `TaxType` */
 export interface TaxType {
@@ -471,10 +604,105 @@ export interface TaxType {
   CityId: number | null;
 }
 
-export const TAX_TYPES: TaxType[] = [
-  { id: 1, Description: "Sales Tax on Services", ChargesType: "PERCENT", Amount: 15, IsDo: false, CityId: null },
-  { id: 2, Description: "Withholding Tax", ChargesType: "PERCENT", Amount: 4, IsDo: false, CityId: null },
-  { id: 3, Description: "DO Processing Tax", ChargesType: "PERCENT", Amount: 15, IsDo: true, CityId: null },
+/**
+ * ILLUSTRATIVE — from the rate card in `./tariff`.
+ *
+ * `ChargesType` carries the `GD%` prefix the CMTS rent-tax query matches on
+ * (`IsDo = 0 AND ChargesType LIKE 'GD%'`, CMTS_SCHEMA_AUDIT §3.5). The card is
+ * written so that predicate selects EXACTLY ONE row; the previous fixture
+ * spelled every row `"PERCENT"`, so the production query would have selected
+ * none and the derivation screen would have reported an outage as a data
+ * finding.
+ */
+export const TAX_TYPES: TaxType[] = ILLUSTRATIVE_TAX_TYPES.map((t) => ({
+  id: t.id,
+  Description: t.Description,
+  ChargesType: t.ChargesType,
+  Amount: t.Amount,
+  IsDo: t.IsDo,
+  CityId: t.CityId,
+}));
+
+/**
+ * CMTS `CHARGETYPE` — the catalogue of charge headings the legacy calculator
+ * cascades through. It carries no rate of its own: the amounts live in
+ * `CARGOSUBCLASSCHARGES` / `LOCATIONCHARGES` / `CargoClassCharges`, and this
+ * table only names the heading each of those resolves into on the voucher.
+ *
+ * Only the four columns SAPS asked for are modelled. The rest of the legacy
+ * row is keys and office scoping, which this prototype deliberately omits, so
+ * `ChTypeAbb` is the natural key here.
+ */
+export interface ChargeType {
+  /** CMTS `ChTypeName` varchar(50) — heading as printed on the voucher. */
+  ChTypeName: string;
+  /** CMTS `ChTypeAbb` varchar(50) — short code used in the charge cascade. */
+  ChTypeAbb: string;
+  /** CMTS `ChTypeDesc` varchar(50) — one-line explanation for the operator. */
+  ChTypeDesc: string;
+  /**
+   * CMTS `Nonuseabel` varchar(50) — legacy spelling, kept verbatim.
+   *
+   * THE SPELLING IS DELIBERATE. "Non-useable" with a dropped vowel, the same
+   * misspelling class as `RECIEVEDBY`, `GrosssWeight` and `TARRIFRATE`
+   * elsewhere in this schema. Migration parity is checked by column name, so
+   * "correcting" it here would make a mapped column look unmapped. Leave it.
+   *
+   * DECIDED — Q7, `CMTS_SCOPE_DECISIONS.md`, ticket 86eyn3nmq: a charge type
+   * carrying a value here is RETIRED. SAPS will not confirm, so the decision
+   * was taken on which way the two failure directions point, and they are not
+   * symmetric:
+   *
+   *   guessed retired, actually live   → the heading is missing from new
+   *                                      calculations. Visible immediately,
+   *                                      one flag flip to fix.
+   *   guessed live, actually retired   → migrated rates silently re-activate
+   *                                      billing SAPS stopped doing. Wrong
+   *                                      invoices, found by a customer.
+   *
+   * So the implementation fails toward "retired": see `isRetiredChargeType()`,
+   * which treats ANY non-empty value — including one nobody has decoded — as
+   * retirement. The column stays a `string | null` rather than a boolean
+   * because a varchar(50) can hold a date, an initial or a reason, and
+   * whatever SAPS actually stored is still worth rendering verbatim next to
+   * the marker.
+   *
+   * What "retired" means in code, and it is two rules not one:
+   *   • EXCLUDED from new calculations — `activeChargeTypes()`
+   *   • STILL RENDERED on historical records, carrying a retired marker —
+   *     `chargeType()` deliberately still resolves retired rows.
+   * A voucher raised while the heading was live must keep showing what it was
+   * billed under. Hiding it would not un-bill the money, only make it
+   * unexplainable.
+   */
+  Nonuseabel: string | null;
+}
+
+/**
+ * Headings match the FC-07 charge block in finance.ts (`HANDLING`, `DEMURRAGE`,
+ * `DOCUMENTATION`, `DECONSOLIDATION`, `SPECIALHANDLING`, `MISCELLANEOUS`) plus
+ * the three cascade inputs that also print as their own line.
+ *
+ * Two headings carry a `Nonuseabel` value and are therefore RETIRED per Q7:
+ * `MVF` (superseded by the documentation heading) and `AFUW` (folded into
+ * special handling). Both are excluded from new calculations and both still
+ * render on the historical vouchers that were billed under them — see
+ * `RETIRED_CHARGE_TYPE_USAGES` in `./tariff`, which seeds one such voucher per
+ * retired heading so the rule is demonstrable rather than theoretical.
+ */
+export const CHARGE_TYPES: ChargeType[] = [
+  { ChTypeName: "Handling Charges", ChTypeAbb: "HND", ChTypeDesc: "Terminal handling per chargeable kg", Nonuseabel: null },
+  { ChTypeName: "Demurrage / Storage", ChTypeAbb: "DEM", ChTypeDesc: "Storage rent beyond the free-day slabs", Nonuseabel: null },
+  { ChTypeName: "Documentation Charges", ChTypeAbb: "DOC", ChTypeDesc: "Per-AWB documentation fee", Nonuseabel: null },
+  { ChTypeName: "Deconsolidation Charges", ChTypeAbb: "DECON", ChTypeDesc: "House breakdown of a consol AWB", Nonuseabel: null },
+  { ChTypeName: "Special Handling", ChTypeAbb: "SPH", ChTypeDesc: "Class-driven special handling uplift", Nonuseabel: null },
+  { ChTypeName: "Delivery Order Charge", ChTypeAbb: "DO", ChTypeDesc: "DO issuance charge per AIRLINE.DOAMOUNT", Nonuseabel: null },
+  { ChTypeName: "Location Charges", ChTypeAbb: "LOC", ChTypeDesc: "Flat daily zone fee for hold zones", Nonuseabel: null },
+  { ChTypeName: "Minimum Charges", ChTypeAbb: "MIN", ChTypeDesc: "Subclass floor from CARGOSUBCLASS.MINCHARGES", Nonuseabel: null },
+  { ChTypeName: "Storage Unit Charges", ChTypeAbb: "STU", ChTypeDesc: "Per-unit charge from STORGEUNIT", Nonuseabel: null },
+  { ChTypeName: "Miscellaneous", ChTypeAbb: "MISC", ChTypeDesc: "Ad-hoc charge entered by the operator", Nonuseabel: null },
+  { ChTypeName: "Manual Voucher Fee", ChTypeAbb: "MVF", ChTypeDesc: "Superseded by the documentation heading", Nonuseabel: "Y" },
+  { ChTypeName: "AFU Weight Surcharge", ChTypeAbb: "AFUW", ChTypeDesc: "Legacy bulky-cargo weight surcharge", Nonuseabel: "Y" },
 ];
 
 /** CMTS `LOCATIONCHARGES` */
@@ -491,23 +719,49 @@ export interface LocationCharge {
   AMOUNT: Amount;
 }
 
-/** One band per hold zone — hold zones charge a flat daily location fee. */
-export const LOCATION_CHARGES: LocationCharge[] = STORAGE_LOCATIONS.filter((l) => l.isHoldZone).map(
-  (l, i) => ({
-    locchrgesID: i + 1,
-    LOCATIONID: l.ID,
-    WEIGHTFROM: 0,
-    WEIGHTTO: null,
-    DAYFROM: 1,
-    DAYTO: null,
-    UNIT: 3,
-    FLATERATE: true,
-    AMOUNT: 1200,
-  }),
-);
+/**
+ * ILLUSTRATIVE — the rate card's zone bands, fanned out across the three
+ * sites' location IDs.
+ *
+ * The card keys its bands on `LOCATION.ABBREVATION` because the demo
+ * instantiates every zone once per site; this is where that becomes the
+ * site-scoped `LOCATIONID` the source table actually carries.
+ *
+ * EVERY zone gets a row, including the ones priced at zero. That is a change
+ * from the previous fixture, which carried rows for hold zones only: an
+ * explicit zero says "this zone has no separate fee, the day-band rate covers
+ * it", which is a decision, whereas a missing row is indistinguishable from an
+ * unfinished rate table. Screens that count unpriced zones will now find none.
+ */
+export const LOCATION_CHARGES: LocationCharge[] = (() => {
+  const rows: LocationCharge[] = [];
+  let id = 1;
+  for (const l of STORAGE_LOCATIONS) {
+    for (const b of LOCATION_CHARGE_BANDS.filter((x) => x.zoneAbbr === l.ABBREVATION)) {
+      rows.push({
+        locchrgesID: id++,
+        LOCATIONID: l.ID,
+        WEIGHTFROM: b.WEIGHTFROM,
+        WEIGHTTO: b.WEIGHTTO,
+        DAYFROM: b.DAYFROM,
+        DAYTO: b.DAYTO,
+        UNIT: b.UNIT,
+        FLATERATE: b.FLATERATE,
+        AMOUNT: b.AMOUNT,
+      });
+    }
+  }
+  return rows;
+})();
 
-/** FC-10 branch C — CMTS `Section82Days` is a single row (`Id`, `Days`). */
-export const SECTION_82_DAYS = 30;
+/**
+ * FC-10 branch C — CMTS `Section82Days` is a single row (`Id`, `Days`).
+ *
+ * ILLUSTRATIVE. The threshold is set by customs statute, not by the terminal,
+ * and nobody on the build team has verified it — of everything on the rate
+ * card this is the value most likely to be mistaken for law. See `./tariff`.
+ */
+export const SECTION_82_DAYS = SECTION_82_DAYS_ROW.Days;
 
 /* ================================================================== *
  * Lookups
@@ -551,6 +805,68 @@ export function airport(code: string): Airport | undefined {
 
 export function party(id: number): Party | undefined {
   return PARTIES.find((x) => x.ID === id);
+}
+
+/**
+ * Keyed on `ChTypeAbb` because the demo does not model CHARGETYPE's surrogate
+ * key.
+ *
+ * DELIBERATELY RESOLVES RETIRED ROWS TOO. This is the lookup a historical
+ * record uses to find out what heading it was billed under, and a voucher
+ * raised in 2024 must still be able to name its own line. Filtering here would
+ * turn every retired heading on an old document into an unattributed number —
+ * exactly the failure the Q7 decision exists to prevent. Callers building a
+ * NEW calculation ask `activeChargeTypes()` instead; callers rendering an old
+ * one ask this and then `isRetiredChargeType()` for the marker.
+ */
+export function chargeType(abb: string): ChargeType | undefined {
+  return CHARGE_TYPES.find((x) => x.ChTypeAbb === abb);
+}
+
+/* ------------------------------------------------------------------ *
+ * Q7 · Nonuseabel means RETIRED — CMTS_SCOPE_DECISIONS.md, ticket 86eyn3nmq
+ * ------------------------------------------------------------------ */
+
+/**
+ * Is this heading retired?
+ *
+ * FAILS SAFE TOWARD RETIREMENT. Any non-empty `Nonuseabel` counts, whatever it
+ * says — "Y", a date, an initial, a reason nobody has decoded. The decision
+ * turns on asymmetry: excluding a heading that was really live is visible on
+ * the next calculation and reversible in one edit, whereas including one that
+ * was really retired re-activates billing SAPS stopped doing and is found by a
+ * customer. When the meaning of a value is uncertain, the recoverable
+ * direction wins.
+ *
+ * Whitespace is trimmed first, so a column holding `" "` reads as live rather
+ * than as a retirement nobody intended.
+ */
+export function isRetiredChargeType(t: ChargeType): boolean {
+  return t.Nonuseabel !== null && t.Nonuseabel.trim() !== "";
+}
+
+/**
+ * The catalogue a NEW calculation may draw on. Retired headings are excluded
+ * here and nowhere else — one exclusion point, so a screen cannot accidentally
+ * offer a withdrawn charge by reading `CHARGE_TYPES` directly and forgetting
+ * the rule.
+ */
+export function activeChargeTypes(): ChargeType[] {
+  return CHARGE_TYPES.filter((t) => !isRetiredChargeType(t));
+}
+
+/** The withdrawn headings — still catalogued, still renderable on old records. */
+export function retiredChargeTypes(): ChargeType[] {
+  return CHARGE_TYPES.filter(isRetiredChargeType);
+}
+
+/**
+ * The marker a historical record renders beside a retired heading, carrying
+ * the raw stored value so a human can still question the decoding. Null when
+ * the heading is live, so callers can render nothing without a second test.
+ */
+export function chargeTypeRetirementMarker(t: ChargeType): string | null {
+  return isRetiredChargeType(t) ? `RETIRED · Nonuseabel = ${t.Nonuseabel}` : null;
 }
 
 /**

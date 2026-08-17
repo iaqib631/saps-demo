@@ -12,8 +12,7 @@
  */
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { ArrowUpRight, Lock, ShieldCheck, Timer } from "lucide-react";
+import { Lock, ShieldCheck, Timer } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import AwbLink from "@/components/awb/AwbLink";
 import EmptyState from "@/components/EmptyState";
@@ -234,12 +233,6 @@ export default function BondedAreaPage() {
                           The transhipment module (P8-1) is not built yet — this zone is its
                           prerequisite.
                         </p>
-                        <Link
-                          href="/modules"
-                          className="inline-flex items-center gap-1 text-[12px] font-semibold text-[#7C3AED] no-underline hover:underline mt-2"
-                        >
-                          M15 status on the module map <ArrowUpRight size={12} />
-                        </Link>
                       </div>
                     </div>
                   )}

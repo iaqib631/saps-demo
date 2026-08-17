@@ -109,7 +109,13 @@ const activities = [
     actor: "Admin",
     entity: "Faisal Ahmed",
     time: "45 min ago",
-    portal: "Admin / Super Admin",
+    // A role granted to one named person is FC-12 §05 (/admin/users), which is
+    // ONE site's configuration and lives in the Warehouse portal's Administration
+    // block. It is not an HQ act: the HQ tier issues the DELEGATION saying who may
+    // administer which node (/hq/site-admins), never the node's own role rows. The
+    // old "Admin / Super Admin" named both tiers for an event that belongs to one,
+    // which is the same conflation the landing tile carried.
+    portal: "Site Administration",
     scope: "inc" as const,
     status: "success" as const,
   },

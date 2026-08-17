@@ -99,16 +99,15 @@ export default function AwbHubContent({ bundle }: { bundle: AwbBundle }) {
     },
   ];
 
-  // FC-12: M03 hub → the CANONICAL Operational Flow screens. Re-pointed from
-  // the persona-portal duplicates (/warehouse-manager/*, /excise-compliance/*,
-  // /cmts-absorption/*) to the process-module canon so the AWB hub, the sidebar
-  // and the FC-02 flow walkthrough all resolve the same screen per step.
-  // Previous persona targets, kept for reference:
-  //   Storage map → /warehouse-manager/storage-map
-  //   Customs queue → /excise-compliance/customs-queue
-  //   Charges → /cmts-absorption/charges-calculator
-  //   Gate entry → /gate-entry/live-vehicle-board
-  //   Exceptions → /warehouse-manager/exceptions-queue
+  // FC-12: M03 hub → the CANONICAL Operational Flow screens. This rail was
+  // re-pointed off the persona-portal duplicates onto the process-module canon
+  // so the AWB hub, the sidebar and the FC-02 flow walkthrough all resolve the
+  // same screen per step. Those duplicates have since been deleted outright, so
+  // the rail is now the only wiring there is rather than one of two.
+  // Only "Storage" and "Gate entry" still name a persona route, and they do so
+  // deliberately: /storage/master and /dispatch/gate-pass are the process
+  // screens, and the persona boards under /warehouse-manager and /gate-entry
+  // remain live surfaces of their own rather than retired twins.
   const rail = [
     { icon: ScanLine, label: "Intake", href: `/awb/${awb.AWBId}?tab=intake`, onClick: () => setTab("intake") },
     { icon: Warehouse, label: "Storage", href: "/storage/master" },

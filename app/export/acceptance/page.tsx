@@ -3,10 +3,16 @@
 /**
  * P9-2 / P9-3 · Export acceptance, weighment, screening & chain of custody.
  *
- * CMTS gives `CARGOACCEPTANCE` (31) and `ACCEPTENCEDETAIL` (10) — and stops.
- * It has LOADEDWEIGHT / UNLOADEDWEIGHT / LEASHINGWEIGHT / PALLETWEIGHT but
- * nothing saying where the numbers came from, and **no field anywhere** for
- * screening, seals or custody.
+ * CMTS gives `CARGOACCEPTANCE` (31), `ACCEPTENCEDETAIL` (10) and
+ * `CARGOACCEPTANCEHWB` (7) — and stops. It has LOADEDWEIGHT / UNLOADEDWEIGHT /
+ * LEASHINGWEIGHT / PALLETWEIGHT but nothing saying where the numbers came
+ * from, and **no field anywhere** for screening, seals or custody.
+ *
+ * All three legacy tables are now *rendered* and not merely named: the header
+ * in the capture cards, the item lines and house rows in
+ * `AcceptanceDetailTables`. The consignment carried typed `lines` and `hwb`
+ * from the start while this screen read neither — a table a screen claims but
+ * never shows is how a column goes missing at migration unnoticed.
  *
  * Two amendments do the work here:
  *
@@ -20,6 +26,12 @@
  *     seal applied after it has to survive every handover. A broken seal at
  *     any handover sends the consignment back to screening — it does not
  *     merely get noted.
+ *
+ * **Ported in from the retired `/export-cargo/acceptance`** (see
+ * PORTAL_AND_DEDUP_PLAN.md §2.1): the named six-document checklist, the cargo
+ * class the counter picks, and the `Held` screening state. That screen's
+ * storage-allocation control went to `/export/warehousing` instead, because
+ * FC-11 puts the put-away at §17 rather than on the acceptance form.
  */
 
 import { useMemo, useState } from "react";
@@ -27,14 +39,22 @@ import Link from "next/link";
 import {
   ArrowUpRight,
   ClipboardCheck,
+  Layers,
+  ListChecks,
   Scale,
   ScanLine,
+  ShieldAlert,
   ShieldCheck,
   ShieldX,
   Truck,
 } from "lucide-react";
 import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
+import ExportCrossStageStrip from "@/components/export/ExportCrossStageStrip";
+import AcceptanceCaptureCards, {
+  AcceptanceOtherColumns,
+} from "@/components/export/acceptance/AcceptanceCaptureCards";
+import AcceptanceDetailTables from "@/components/export/acceptance/AcceptanceDetailTables";
 import { AuditStrip, FormField, FormCompletenessGate } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
@@ -45,7 +65,122 @@ import {
   formatDateTime,
   formatKg,
   listExports,
+  type ExportConsignment,
 } from "@/lib/domain";
+
+/* ================================================================== *
+ * The counter's named document set — ported from /export-cargo/acceptance
+ *
+ * The canonical card below renders `capturedDocs` generically, which is
+ * right for provenance: what paper the value came off, who keyed it, who
+ * countersigned. It is wrong for the counter. A clerk does not ask "are the
+ * captured documents complete", she asks "have I got the certificate of
+ * origin" — and the answer to that is a name, not a count. The retired
+ * screen enumerated the six by name, and that enumeration is the half worth
+ * keeping.
+ *
+ * Each row derives its default tick off the record rather than starting
+ * checked, because an unticked box is a real state here rather than a
+ * styling choice. Two of the six are conditional, and a row that does not
+ * apply is shown as not-applicable rather than hidden — so the clerk can see
+ * the branch was considered instead of guessing it was forgotten.
+ * ================================================================== */
+
+type DocTickState = "captured" | "outstanding" | "not-applicable";
+
+interface CounterDocument {
+  code: string;
+  label: string;
+  /** The paper the clerk reads it off. */
+  source: string;
+  derive: (c: ExportConsignment) => DocTickState;
+}
+
+function hasCapturedDoc(c: ExportConsignment, label: string): boolean {
+  return c.capturedDocs.some((d) => d.label.toLowerCase() === label.toLowerCase());
+}
+
+/**
+ * DGR Declaration and NOTOC ride on one fact: is this consignment classified
+ * as dangerous goods. Before E07 that is not yet known, so the row reads
+ * outstanding rather than not-applicable — "nobody has checked" and "it does
+ * not apply" are different states, and collapsing them is how a DG shipment
+ * reaches a ULD with a tidy-looking checklist behind it.
+ */
+function dgrState(c: ExportConsignment): DocTickState {
+  if (!c.classification) return "outstanding";
+  if (!c.classification.codes.includes("DGR")) return "not-applicable";
+  return c.classification.checks.some((k) => k.code === "DGR" && k.pass) ? "captured" : "outstanding";
+}
+
+const COUNTER_DOCUMENTS: CounterDocument[] = [
+  {
+    code: "INV",
+    label: "Commercial Invoice",
+    source: "Shipper pack",
+    derive: (c) => (hasCapturedDoc(c, "Commercial invoice") ? "captured" : "outstanding"),
+  },
+  {
+    code: "PL",
+    label: "Packing List",
+    source: "Shipper pack",
+    derive: (c) => (hasCapturedDoc(c, "Packing list") ? "captured" : "outstanding"),
+  },
+  {
+    code: "GD",
+    label: "Export GD (PSW)",
+    source: "PSW single declaration",
+    // The export GD is the Single Declaration lodged with PSW. `sdRef` is
+    // where the canonical model carries it — it is not a `capturedDocs` row,
+    // which is why this one reads off the declaration instead.
+    derive: (c) => (c.declaration.sdRef ? "captured" : "outstanding"),
+  },
+  {
+    code: "COO",
+    label: "Certificate of Origin",
+    source: "Chamber of commerce",
+    // Nothing in the domain models a CoO yet, so this starts outstanding on
+    // every consignment. Kept visible rather than dropped: most export
+    // destinations require one, and a gap that shows is worth more than a
+    // checklist that quietly omits the field nobody has built.
+    derive: () => "outstanding",
+  },
+  {
+    code: "DGD",
+    label: "DGR Declaration",
+    source: "Shipper's declaration for dangerous goods",
+    derive: dgrState,
+  },
+  {
+    code: "NOTOC",
+    label: "NOTOC",
+    source: "Notification to captain",
+    derive: dgrState,
+  },
+];
+
+/* ================================================================== *
+ * Cargo class at the counter — ported from /export-cargo/acceptance
+ *
+ * `SpecialHandlingCode` covers the six classes that carry a verification at
+ * E07 (DGR / PER / AVI / VAL / HUM / COL). The counter's list is not that
+ * list. It needs **GCR** for the general case, which is most consignments and
+ * has no special-handling code by definition, and **AOG** for an
+ * aircraft-on-ground spare, which is a handling priority rather than a
+ * regulated verification. Both are counter vocabulary with no canonical
+ * enum member, so the picker is a screen-level list — and CMTS is no help
+ * either: `CARGOGROUP` carries GENERAL and `CARGOTYPE` carries EXPORT, and
+ * that is the whole legacy classification.
+ * ================================================================== */
+
+const COUNTER_CARGO_CLASSES = ["GCR", "DGR", "PER", "VAL", "HUM", "AOG", "AVI"] as const;
+type CounterCargoClass = (typeof COUNTER_CARGO_CLASSES)[number];
+
+/** What the record already implies, before the clerk touches the picker. */
+function derivedCargoClass(c: ExportConsignment): CounterCargoClass {
+  const codes: string[] = c.classification?.codes ?? [];
+  return COUNTER_CARGO_CLASSES.find((k) => codes.includes(k)) ?? "GCR";
+}
 
 export default function ExportAcceptancePage() {
   const { scope, isHq } = useSite();
@@ -54,6 +189,32 @@ export default function ExportAcceptancePage() {
   const [selected, setSelected] = useState<number | null>(consignments[0]?.id ?? null);
   const c = consignments.find((x) => x.id === selected) ?? consignments[0] ?? null;
   const [tab, setTab] = useState<"acceptance" | "weighment" | "screening">("acceptance");
+
+  /*
+   * Three pieces of counter state that the domain has nowhere to put yet, all
+   * keyed by consignment id so switching rows does not carry one consignment's
+   * work onto the next. Each is an override on a derived default rather than a
+   * replacement for it: absent a key, the record's own state stands.
+   */
+  const [docTicks, setDocTicks] = useState<Record<string, boolean>>({});
+  const [cargoClassPick, setCargoClassPick] = useState<Record<number, CounterCargoClass>>({});
+  const [heldAtScreening, setHeldAtScreening] = useState<Record<number, string>>({});
+
+  function tickState(cons: ExportConsignment, doc: CounterDocument): DocTickState {
+    const base = doc.derive(cons);
+    // A row that does not apply cannot be ticked into applying.
+    if (base === "not-applicable") return base;
+    const key = `${cons.id}:${doc.code}`;
+    if (!(key in docTicks)) return base;
+    return docTicks[key] ? "captured" : "outstanding";
+  }
+
+  /**
+   * Membership, not truthiness: the stored value is the *reason* for the
+   * hold, and a hold nobody has justified yet is still a hold. Keying on the
+   * presence of the entry keeps an empty reason from reading as released.
+   */
+  const isHeldAtScreening = (id: number) => id in heldAtScreening;
 
   const brokenCustody = consignments.filter((x) =>
     x.custodyChain.some((e) => e.sealIntact === false),
@@ -67,10 +228,10 @@ export default function ExportAcceptancePage() {
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="h-[18px] px-1.5 rounded bg-[#EBF0F7] text-[#0B2545] text-[10px] font-bold inline-flex items-center font-mono">
-              FC-11 §E02–E06
+              FC-11 §02–03 · §11–14
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#64748B] text-[10px] font-bold inline-flex items-center font-mono">
-              CARGOACCEPTANCE 31 · ACCEPTENCEDETAIL 10
+              CARGOACCEPTANCE 31 · ACCEPTENCEDETAIL 10 · CARGOACCEPTANCEHWB 7
             </span>
             <span className="h-[18px] px-1.5 rounded bg-[#F5F3FF] text-[#7C3AED] text-[10px] font-bold inline-flex items-center font-mono">
               GREENFIELD
@@ -85,6 +246,11 @@ export default function ExportAcceptancePage() {
           </p>
         </div>
       </div>
+
+      <ExportCrossStageStrip
+        rows={consignments}
+        scopeLabel={isHq ? "All sites" : `${scope} only`}
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
@@ -111,7 +277,7 @@ export default function ExportAcceptancePage() {
       {consignments.length === 0 ? (
         <EmptyState
           title="No export consignments at this site"
-          description="FC-11 starts at booking; acceptance is §E02 at the export counter."
+          description="FC-11 starts at booking; acceptance is §12 at the export counter."
         />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -134,11 +300,18 @@ export default function ExportAcceptancePage() {
                       <span className="font-mono text-[12px] font-semibold text-[#0F172A]">
                         {x.awbNo}
                       </span>
-                      {broken && (
-                        <span className="h-[18px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[9px] font-bold inline-flex items-center">
-                          SEAL BROKEN
-                        </span>
-                      )}
+                      <span className="flex items-center gap-1 flex-shrink-0">
+                        {isHeldAtScreening(x.id) && (
+                          <span className="h-[18px] px-1.5 rounded bg-[#FEF3C7] text-[#D97706] text-[9px] font-bold inline-flex items-center">
+                            HELD
+                          </span>
+                        )}
+                        {broken && (
+                          <span className="h-[18px] px-1.5 rounded bg-[#FEE2E2] text-[#DC2626] text-[9px] font-bold inline-flex items-center">
+                            SEAL BROKEN
+                          </span>
+                        )}
+                      </span>
                     </div>
                     <p className="text-[11px] text-[#64748B] mt-0.5">
                       {x.acceptance.DESTINATION} · {x.acceptance.AIRLINEABB} ·{" "}
@@ -202,37 +375,30 @@ export default function ExportAcceptancePage() {
 
               {tab === "acceptance" && (
                 <>
-                  <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
-                      <ClipboardCheck size={15} className="text-[#64748B]" />
-                      <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                        CARGOACCEPTANCE — all 31 columns
-                      </h3>
-                    </div>
-                    <div className="p-5 grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-4">
-                      {(Object.entries(c.acceptance) as Array<[string, unknown]>).map(([k, v]) => (
-                        <div key={k} className="flex flex-col gap-1">
-                          <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
-                          <span
-                            className="text-[12px] font-medium break-words"
-                            style={{ color: v === null || v === "" ? "#CBD5E1" : "#0F172A" }}
-                          >
-                            {v === null || v === "" ? "null" : String(v)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  {/*
+                   * The operator capture set — identity, the clock and scale,
+                   * the parties. These lead the tab because they are the order
+                   * the counter works in; the residual CARGOACCEPTANCE columns
+                   * close it, since a status flag is something the clerk reads
+                   * back rather than something she keys.
+                   */}
+                  <AcceptanceCaptureCards
+                    acceptance={c.acceptance}
+                    scaleNetKg={c.weighment?.netKg ?? null}
+                  />
 
                   <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-                    <div className="px-5 py-3.5 border-b border-[#E2E8F0]">
-                      <h3 className="text-[14px] font-semibold text-[#0F172A]">
-                        Export documents — keyed at the counter
-                      </h3>
-                      <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                        The shipper hands paper across the counter and the clerk types it. No
-                        scanner in this loop — OCR is inbound MAWB/HAWB and receiver docs only.
-                      </p>
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-start gap-2">
+                      <ClipboardCheck size={15} className="text-[#64748B] mt-0.5 flex-shrink-0" />
+                      <div>
+                        <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                          Export documents — keyed at the counter
+                        </h3>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                          The shipper hands paper across the counter and the clerk types it. No
+                          scanner in this loop — OCR is inbound MAWB/HAWB and receiver docs only.
+                        </p>
+                      </div>
                     </div>
                     <div className="p-5 flex flex-col gap-4">
                       <FormCompletenessGate
@@ -249,6 +415,162 @@ export default function ExportAcceptancePage() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Ported from /export-cargo/acceptance — the named six. */}
+                  <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+                      <ListChecks size={15} className="text-[#64748B]" />
+                      <div>
+                        <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                          Counter checklist — the six named documents
+                        </h3>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                          The card above carries provenance for what was keyed. This is the set
+                          itself, by name, the way the clerk works through it.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="p-5 flex flex-col gap-4">
+                      {(() => {
+                        const states = COUNTER_DOCUMENTS.map((d) => tickState(c, d));
+                        const applicable = states.filter((s) => s !== "not-applicable").length;
+                        const outstanding = states.filter((s) => s === "outstanding").length;
+                        return (
+                          <FormCompletenessGate
+                            total={applicable}
+                            outstanding={outstanding}
+                            context="Cargo does not move to weighment on an incomplete set. A document that does not apply to this consignment is marked so rather than left blank."
+                          />
+                        );
+                      })()}
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {COUNTER_DOCUMENTS.map((doc) => {
+                          const st = tickState(c, doc);
+                          const na = st === "not-applicable";
+                          return (
+                            <label
+                              key={doc.code}
+                              className="flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors"
+                              style={{
+                                borderColor:
+                                  st === "captured" ? "#BBF7D0" : na ? "#E2E8F0" : "#FDE68A",
+                                backgroundColor:
+                                  st === "captured" ? "#F0FDF4" : na ? "#F8FAFC" : "#FFFBEB",
+                                cursor: na ? "not-allowed" : "pointer",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={st === "captured"}
+                                disabled={na}
+                                onChange={(e) =>
+                                  setDocTicks((prev) => ({
+                                    ...prev,
+                                    [`${c.id}:${doc.code}`]: e.target.checked,
+                                  }))
+                                }
+                                className="mt-0.5 rounded border-[#CBD5E1] accent-[#0B2545] flex-shrink-0"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[13px] font-semibold text-[#0F172A]">
+                                  {doc.label}
+                                </span>
+                                <span className="block text-[11px] text-[#94A3B8] mt-0.5">
+                                  {doc.source}
+                                </span>
+                              </span>
+                              {na && (
+                                <span className="h-[18px] px-1.5 rounded bg-[#F1F5F9] text-[#94A3B8] text-[9px] font-bold inline-flex items-center flex-shrink-0">
+                                  N/A
+                                </span>
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Ported from /export-cargo/acceptance — the counter's class picker. */}
+                  <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
+                      <Layers size={15} className="text-[#64748B]" />
+                      <div>
+                        <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                          Cargo class — picked at the counter
+                        </h3>
+                        <p className="text-[11px] text-[#94A3B8] mt-0.5">
+                          What the clerk classifies it as on presentation. It is what routes the
+                          special-cargo branch (§16a / §16b) at E07.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="p-5 flex flex-col gap-4">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {COUNTER_CARGO_CLASSES.map((k) => {
+                          const active = (cargoClassPick[c.id] ?? derivedCargoClass(c)) === k;
+                          return (
+                            <button
+                              key={k}
+                              onClick={() =>
+                                setCargoClassPick((prev) => ({ ...prev, [c.id]: k }))
+                              }
+                              className="h-8 px-3.5 rounded-lg text-[12px] font-bold font-mono border transition-colors cursor-pointer"
+                              style={{
+                                backgroundColor: active ? "#0B2545" : "#FFFFFF",
+                                color: active ? "#FFFFFF" : "#475569",
+                                borderColor: active ? "#0B2545" : "#E2E8F0",
+                              }}
+                            >
+                              {k}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-3">
+                        {(
+                          [
+                            ["CARGOGROUP", c.acceptance.CARGOGROUP],
+                            ["CARGOTYPE", c.acceptance.CARGOTYPE],
+                            ["REVENUECODE", c.acceptance.REVENUECODE],
+                          ] as const
+                        ).map(([k, v]) => (
+                          <div key={k} className="flex flex-col gap-1">
+                            <span className="text-[9px] font-mono text-[#CBD5E1]">{k}</span>
+                            <span className="text-[12px] font-medium text-[#0F172A]">{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-[#94A3B8] leading-relaxed">
+                        GCR and AOG have no <span className="font-mono">SpecialHandlingCode</span>{" "}
+                        behind them — the first because a general consignment is defined by having
+                        no special handling, the second because an aircraft-on-ground spare is a
+                        priority rather than a regulated verification. Both are counter vocabulary,
+                        and CMTS carries neither: the three legacy columns above are the whole of
+                        its classification.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/*
+                   * The other two tables of the trio. The badge on this page
+                   * has always claimed ACCEPTENCEDETAIL and the consignment has
+                   * always carried the typed rows; nothing read them, so the
+                   * per-line goods, pieces, weight and dimensions — and the
+                   * house breakdown of a consolidation — had no representation
+                   * on the export side at all. They sit after the class picker
+                   * because the clerk classifies the consignment before working
+                   * down its items, and before the residual column dump because
+                   * that dump closes the tab.
+                   */}
+                  <AcceptanceDetailTables
+                    lines={c.lines}
+                    hwb={c.hwb}
+                    acceptance={c.acceptance}
+                  />
+
+                  <AcceptanceOtherColumns acceptance={c.acceptance} />
                 </>
               )}
 
@@ -327,6 +649,99 @@ export default function ExportAcceptancePage() {
 
               {tab === "screening" && (
                 <>
+                  {/*
+                   * Ported from /export-cargo/acceptance — the `Held` state.
+                   *
+                   * `ScreeningResult` is pass / fail / re-screen / referred, and
+                   * none of those is what happens most often at a screening
+                   * point: the bag is pulled and put to one side while ANF is
+                   * called, the shipper is phoned, or the operator waits for a
+                   * second reading. That consignment has not failed and has not
+                   * been referred — it is held, and the canonical enum has no
+                   * member for it, so it is carried here at screen level until
+                   * `ScreeningResult` gains one. Held is a place a consignment
+                   * sits, not a result it was given, which is why it reads off a
+                   * separate control rather than being squeezed into the enum.
+                   */}
+                  <div
+                    className="rounded-[16px] border overflow-hidden"
+                    style={{
+                      borderColor: isHeldAtScreening(c.id) ? "#FDE68A" : "#E2E8F0",
+                      backgroundColor:
+                        isHeldAtScreening(c.id) ? "#FFFBEB" : "#FFFFFF",
+                    }}
+                  >
+                    <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center justify-between gap-3 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <ShieldAlert
+                          size={15}
+                          className={
+                            isHeldAtScreening(c.id)
+                              ? "text-[#D97706]"
+                              : "text-[#64748B]"
+                          }
+                        />
+                        <div>
+                          <h3 className="text-[14px] font-semibold text-[#0F172A]">
+                            Held at the screening point
+                          </h3>
+                          <p className="text-[11px] text-[#94A3B8]">
+                            Not a screening result — a place the consignment is sitting
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() =>
+                          setHeldAtScreening((prev) => {
+                            const next = { ...prev };
+                            if (c.id in next) delete next[c.id];
+                            else next[c.id] = "";
+                            return next;
+                          })
+                        }
+                        className="h-8 px-3.5 rounded-lg text-[12px] font-semibold border transition-colors cursor-pointer"
+                        style={
+                          isHeldAtScreening(c.id)
+                            ? { backgroundColor: "#D97706", color: "#FFFFFF", borderColor: "#D97706" }
+                            : { backgroundColor: "#FFFFFF", color: "#475569", borderColor: "#E2E8F0" }
+                        }
+                      >
+                        {isHeldAtScreening(c.id) ? "Release the hold" : "Hold here"}
+                      </button>
+                    </div>
+                    <div className="p-5 flex flex-col gap-3">
+                      {isHeldAtScreening(c.id) ? (
+                        <>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                              Why it is held
+                            </label>
+                            <input
+                              value={heldAtScreening[c.id] ?? ""}
+                              onChange={(e) =>
+                                setHeldAtScreening((prev) => ({ ...prev, [c.id]: e.target.value }))
+                              }
+                              placeholder="e.g. ANF attendance requested — second X-ray reading inconclusive"
+                              className="h-9 px-3 rounded-lg border border-[#E2E8F0] bg-white text-[13px] text-[#0F172A] outline-none focus:border-[#1B4F8B]"
+                            />
+                          </div>
+                          <p className="text-[12px] text-[#92400E]">
+                            While it is held, the consignment does not move to E07 and no seal is
+                            applied. Releasing the hold does not create a pass — the screening
+                            record below is still the regulated fact.
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-[12px] text-[#64748B]">
+                          Nothing holding this consignment at screening. The four canonical results
+                          — pass, fail, re-screen, referred — describe what the screener decided;
+                          this describes whether the consignment is allowed to leave the point
+                          while that decision is still open.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
                     <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
                       <ScanLine size={15} className="text-[#64748B]" />

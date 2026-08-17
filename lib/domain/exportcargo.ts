@@ -69,7 +69,17 @@ export const EXPORT_STAGE_ORDER: ExportStage[] = [
 
 export interface CargoAcceptance {
   CARGODATE: string;
-  CARGOID: number;
+  /**
+   * CMTS `varchar(13)` — and a **business** identifier, not a surrogate key:
+   * it is the physical cargo reference an operator reads off the consignment
+   * in front of them. Typing it as a number would be wrong twice over. It
+   * would invent a database key the legacy system does not have, and it
+   * would silently destroy references that are not purely numeric — leading
+   * zeros, station prefixes, and check characters all survive a varchar and
+   * none of them survive a parse to int. The same column appears on
+   * `ACCEPTENCEDETAIL`, which is how a line is tied back to its header.
+   */
+  CARGOID: string;
   REVENUECODE: string;
   CARGOGROUP: string;
   CARGOTYPE: string;
@@ -78,6 +88,20 @@ export interface CargoAcceptance {
   BAGNO: string | null;
   LOADEDWEIGHT: number;
   UNLOADEDWEIGHT: number;
+  /**
+   * `TIMEOFWEIGHMENT` and `TIMEOFACCEPTENCE` are CMTS `varchar(5)` — clock
+   * times held as text, `HH:MM`, with no date attached. They stay strings.
+   *
+   * The tempting cleanup is to fold each one into `CARGODATE` and store a
+   * single timestamp. That is a **lossy transform** and must not happen at
+   * migration. A varchar(5) can hold what the counter actually recorded,
+   * including the states a timestamp cannot represent: blank when the step
+   * was skipped, and a wall-clock time that legitimately precedes or crosses
+   * midnight relative to `CARGODATE` on a night shift. Combining the two
+   * columns forces a date onto a value that never had one, and the operator's
+   * original entry is then unrecoverable — the reverse transform does not
+   * exist. Parse to a real time at the point of display, never in storage.
+   */
   TIMEOFWEIGHMENT: string;
   TIMEOFACCEPTENCE: string;
   VEHICALNO: string;
@@ -101,10 +125,16 @@ export interface CargoAcceptance {
   AIRLINEABB: string;
 }
 
-/** CMTS `ACCEPTENCEDETAIL` (10) */
+/** CMTS `ACCEPTENCEDETAIL` (10) — the legacy spelling is the schema's own. */
 export interface AcceptanceLine {
   CARGODATE: string;
-  CARGOID: number;
+  /**
+   * Same business reference as the header's `CARGOID`, same `varchar(13)`.
+   * `CARGODATE` + `CARGOID` is how CMTS relates a detail line to its
+   * acceptance header — there is no join column beyond the two the operator
+   * already sees, which is why neither may be retyped as a generated key.
+   */
+  CARGOID: string;
   SEQUENCE: number;
   NATUREOFGOODS: string;
   PCS: number;
@@ -113,6 +143,38 @@ export interface AcceptanceLine {
   HEIGHT: number;
   LENGTH: number;
   UNIT: string;
+}
+
+/**
+ * CMTS `CARGOACCEPTANCEHWB` (7) — the house breakdown captured at acceptance,
+ * i.e. the rows that exist only when the accepted consignment is a
+ * consolidation and one master covers many houses.
+ *
+ * The trio `CARGOACCEPTANCE` / `ACCEPTENCEDETAIL` / `CARGOACCEPTANCEHWB` is
+ * cited as source lineage by both the export and the import acceptance
+ * screens, because in CMTS one set of tables records the acceptance event on
+ * either side of the terminal.
+ */
+export interface AcceptanceHwb {
+  /**
+   * `varchar(45)`. The widest HWB column in CMTS — the same house number is
+   * `varchar(40)` on `AWBDELEIVERYORDER` and narrower still elsewhere. The
+   * widest declaration is the one worth modelling, since a house number that
+   * round-trips through the acceptance table must not be truncated by a type
+   * chosen from a different table's copy of the column.
+   */
+  HWBNO: string;
+  /**
+   * `int` here — and deliberately not the same shape as `CARGOGROUP` on
+   * `CARGOACCEPTANCE`, which is a varchar. The legacy schema really does
+   * carry this column as a code number on the house rows and as text on the
+   * header. Reconciling the two is a migration decision that has not been
+   * taken, so each table keeps the type it actually has and the disagreement
+   * stays visible rather than being papered over here.
+   */
+  CARGOGROUP: number | null;
+  /** Part of the acceptance key the house rows hang off, with `CARGOID`. */
+  CARGODATE: string;
 }
 
 /* ================================================================== *
@@ -305,6 +367,13 @@ export interface ExportConsignment extends DomainRecord {
   acceptance: CargoAcceptance;
   lines: AcceptanceLine[];
   /**
+   * Empty for a straight master. Populated only when the consignment is a
+   * consolidation, which is the condition under which CMTS writes
+   * `CARGOACCEPTANCEHWB` rows at all — an empty array is therefore a
+   * meaningful "not a consolidation", not missing data.
+   */
+  hwb: AcceptanceHwb[];
+  /**
    * Export documents are **keyed at the acceptance counter**, not scanned.
    * FC-11 drew this as OCR by analogy with the import side; the import
    * scan point is inbound MAWB/HAWB off the flight pouch, which has no
@@ -357,7 +426,7 @@ export interface RampCondition {
 }
 
 /**
- * FC-11 §E11 — cargo cannot go airside until it is screened and sealed, the
+ * FC-11 §22 — cargo cannot go airside until it is screened and sealed, the
  * custody chain is unbroken, the export declaration has cleared PSW, and the
  * build matches the load plan. Each is independently regulated; passing four
  * of five is not "nearly ready", it is not ready.
@@ -520,7 +589,7 @@ export interface ExportClearance {
 }
 
 /**
- * FC-11 — a consignment is through E05 only on a `cleared` round. An open
+ * FC-11 — a consignment is through §08 only on a `cleared` round. An open
  * `held-for-correction` round means the loop is still live, which is a
  * different thing from having failed.
  */
@@ -543,9 +612,9 @@ export function clearanceState(c: ExportClearance) {
 /* ================================================================== *
  * E07 — Classification and the special-cargo branch
  *
- * FC-11 08: "Special Cargo?" → 08a special handling verification
- * (DGR / PER / AVI / VAL) or 08b normal export storage. The branch is not
- * cosmetic: 08a is a verification with a named verifier and a document
+ * FC-11 §16: "Special cargo?" → §16a special handling verification
+ * (DGR / PER / AVI / VAL) or §16b general export storage. The branch is not
+ * cosmetic: §16a is a verification with a named verifier and a document
  * behind it, and skipping it for cargo that needed it is how a DG shipment
  * reaches a ULD unverified.
  * ================================================================== */
@@ -614,7 +683,7 @@ export interface ExportWarehousing {
  *
  * FC-11's most consequential loop, and the one most easily missed: the
  * "Payload compatibility with Flight" diamond has a **No** edge that goes
- * back to 09 Export Warehousing, annotated "Can be offloaded depending
+ * back to §17 export warehousing, annotated "Can be offloaded depending
  * upon weight provision". Cargo that has passed every gate — screened,
  * sealed, cleared, built — can still come off the aircraft for payload,
  * and it re-enters at warehousing rather than dropping out of the flow.

@@ -3,7 +3,7 @@
 /**
  * P3-1 · CDR Workbench — FC-04 end to end.
  *
- * The existing `/warehouse-manager/exceptions-queue` is a queue: it lists
+ * The warehouse exceptions queue this absorbs was a queue: it listed
  * things that went wrong. FC-04 asks for a *workbench* — the place the
  * discrepancy is worked, which the demo has never had. The three
  * amendments this screen exists to carry:
@@ -18,9 +18,34 @@
  * The 9 discrepancy types and 6 evidence kinds are modelled verbatim in
  * lib/domain/exceptions.ts, so this screen renders them rather than
  * re-listing them.
+ *
+ * ---------------------------------------------------------------------
+ * Merged in from that queue. Being a workbench rather than a list was the
+ * right call and it went one step too far: a workbench with no queue can
+ * describe one discrepancy in full and cannot tell you which one to open.
+ * All nine discrepancy types were already covered here, so what came across
+ * is purely the work-management layer —
+ *
+ *   • Priority, owner and an explicit "Unassigned" value, with an Assign
+ *     action and an owner filter. `CDR.raisedBy` names who found it, never
+ *     who has to fix it, so an unowned CDR was invisible.
+ *   • Age, and the average-age tile against a six-hour SLA target.
+ *   • Queue statuses (Assigned / Escalated / Resolved / Closed) with
+ *     Escalate, Mark resolved and Add note — a second axis alongside the
+ *     FC-04 stage, not a replacement for it. See
+ *     components/exceptions/cdr/queueLayer.ts.
+ *   • Cargo-class and age-band filters, the sortable register with a
+ *     pieces-affected column, the type quick-filter chips, and the KPI
+ *     tiles with trend deltas.
+ *
+ * BC-2 adds `CDR.origin`, surfaced here as a filter and a register column.
+ * It is the one facet the type filter structurally cannot replace: intake
+ * variance and a short pick both raise `shortage`, so without the origin a
+ * dispatch-side CDR and an intake-side one are the same row.
+ * ---------------------------------------------------------------------
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -28,7 +53,6 @@ import {
   Ban,
   Bell,
   CheckCircle2,
-  ClipboardList,
   Radio,
   RotateCcw,
   XCircle,
@@ -38,10 +62,28 @@ import Breadcrumb from "@/components/Breadcrumb";
 import EmptyState from "@/components/EmptyState";
 import AwbLink from "@/components/awb/AwbLink";
 import StageRail, { type RailStep } from "@/components/exceptions/StageRail";
+import CdrQueueTable from "@/components/exceptions/cdr/CdrQueueTable";
+import QueueFilterBar from "@/components/exceptions/cdr/QueueFilterBar";
+import QueueKpiStrip, { type QueueTile } from "@/components/exceptions/cdr/QueueKpiStrip";
+import {
+  CDR_PRIORITY_LABEL,
+  CDR_SLA_HOURS,
+  CDR_UNASSIGNED,
+  EMPTY_QUEUE_FILTERS,
+  buildQueue,
+  filterQueue,
+  formatAge,
+  formatTrend,
+  sortQueue,
+  trendDelta,
+  type QueueFilterState,
+  type QueueSortKey,
+} from "@/components/exceptions/cdr/queueLayer";
 import { AuditStrip, DocNumber, EvidencePack } from "@/components/primitives";
 import { useSite } from "@/components/site/SiteContext";
 import {
   CDR_FINAL_ACTION_LABEL,
+  CDR_ORIGIN_LABEL,
   DISCREPANCY_LABEL,
   VARIANCE_DERIVED_TYPES,
   VARIANCE_TOLERANCE,
@@ -51,6 +93,7 @@ import {
   cdrInstruction,
   evaluateCdrClosure,
   formatDateTime,
+  isDispatchOrigin,
   listCdrs,
   listVarianceScreen,
   storageLocation,
@@ -100,20 +143,52 @@ const ACTION_HANDOFF: Record<CdrFinalAction, { href: string | null; note: string
   },
   "F5-claim-liability": {
     href: null,
-    note: "Opens a carrier liability claim. No demo module — flagged on the module map.",
+    note: "Opens a carrier liability claim. No demo module — recorded as a coverage gap against M06, not built.",
   },
 };
 
 export default function CdrWorkbenchPage() {
   const { scope, isHq } = useSite();
-  const cdrs = useMemo(() => listCdrs(scope), [scope]);
+  // The FC-04 record from lib/domain, composed with the queue-management layer
+  // the legacy exceptions queue carried. One composition feeds the tiles, the
+  // filters, the register and the detail, so they cannot disagree.
+  const cdrs = useMemo(() => buildQueue(listCdrs(scope)), [scope]);
+
+  const [filters, setFilters] = useState<QueueFilterState>(EMPTY_QUEUE_FILTERS);
+  // Priority-first is the order a queue is actually read in; everything else is
+  // a deliberate re-sort by the operator.
+  const [sortKey, setSortKey] = useState<QueueSortKey>("priority");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
+
+  const visible = useMemo(
+    () => sortQueue(filterQueue(cdrs, filters), sortKey, sortDirection),
+    [cdrs, filters, sortKey, sortDirection],
+  );
 
   const [selectedId, setSelectedId] = useState<number | null>(cdrs[0]?.id ?? null);
-  const cdr = cdrs.find((c) => c.id === selectedId) ?? cdrs[0] ?? null;
+  // Filtering the selected CDR out of the register would otherwise leave the
+  // workbench below working on a row that is no longer on screen.
+  useEffect(() => {
+    if (visible.length === 0) return;
+    if (!visible.some((x) => x.id === selectedId)) setSelectedId(visible[0].id);
+  }, [visible, selectedId]);
+
+  const cdr = visible.find((c) => c.id === selectedId) ?? visible[0] ?? null;
 
   /** Local-only: lets the walkthrough exercise §11 without a backend. */
   const [draftAction, setDraftAction] = useState<CdrFinalAction | null>(null);
   const chosen = cdr?.finalAction ?? draftAction;
+
+  // A draft §11 action belongs to the CDR it was chosen against. Keyed off the
+  // CDR actually rendered rather than the click handler, because a filter or a
+  // re-sort can move the selection with nobody clicking anything.
+  const selectedKey = cdr?.id ?? null;
+  useEffect(() => {
+    setDraftAction(null);
+  }, [selectedKey]);
+
+  /** Queue verbs have no backend either, so they append here and say so. */
+  const [actionLog, setActionLog] = useState<string[]>([]);
 
   const closureGate = useMemo(
     () => (cdr ? evaluateCdrClosure(cdr) : null),
@@ -127,8 +202,87 @@ export default function CdrWorkbenchPage() {
   const nearMisses = screen.filter((s) => s.nearMiss);
   const inconsistent = screen.filter((s) => s.inconsistent);
 
-  const openCount = cdrs.filter((c) => c.status !== "closed").length;
-  const autoRaised = cdrs.filter((c) => c.autoRaised).length;
+  const open = cdrs.filter((c) => c.status !== "closed");
+  const slaBreaches = open.filter((c) => c.overSla);
+  const avgAgeHours =
+    open.length === 0 ? null : open.reduce((n, c) => n + c.ageHours, 0) / open.length;
+
+  const owners = useMemo(
+    () => Array.from(new Set(cdrs.map((c) => c.owner))).sort(),
+    [cdrs],
+  );
+  const cargoClasses = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const c of cdrs) seen.set(c.cargoClassAbbr, c.cargoClassName);
+    return Array.from(seen, ([abbr, name]) => ({ abbr, name })).sort((a, b) =>
+      a.abbr.localeCompare(b.abbr),
+    );
+  }, [cdrs]);
+
+  const countTile = (
+    label: string,
+    subtitle: string,
+    match: (c: (typeof cdrs)[number]) => boolean,
+  ): QueueTile => {
+    const delta = trendDelta(cdrs, match);
+    return {
+      label,
+      value: String(cdrs.filter(match).length),
+      subtitle,
+      trend: formatTrend(delta),
+      delta,
+      goodDirection: "down",
+    };
+  };
+
+  const tiles: QueueTile[] = [
+    countTile("Open CDRs", "Across all nine types", (c) => c.status !== "closed"),
+    countTile("Auto-raised from variance", "FC-04 §01 amendment", (c) => c.autoRaised),
+    countTile(
+      "Awaiting instruction",
+      "§10 — waiting on the airline",
+      (c) => c.status === "awaiting-instruction",
+    ),
+    {
+      label: "Escalation rounds",
+      value: String(cdrs.reduce((n, c) => n + cdrEscalations(c), 0)),
+      subtitle: "§10 No-edge re-sends, all CDRs",
+    },
+    countTile(
+      "Unassigned",
+      "Nobody has picked these up",
+      (c) => c.owner === CDR_UNASSIGNED && c.status !== "closed",
+    ),
+    {
+      label: "Avg exception age",
+      value: avgAgeHours === null ? "—" : formatAge(avgAgeHours),
+      subtitle: `Open CDRs · SLA target ${CDR_SLA_HOURS}h`,
+      trend:
+        slaBreaches.length === 0
+          ? `All inside the ${CDR_SLA_HOURS}h target`
+          : `${slaBreaches.length} past the ${CDR_SLA_HOURS}h target`,
+      alert: slaBreaches.length > 0,
+    },
+    countTile("Damage cases", "Type: damage", (c) => c.type === "damage"),
+    countTile("Shortage cases", "Type: shortage", (c) => c.type === "shortage"),
+    countTile("Overage cases", "Type: overage", (c) => c.type === "overage"),
+    countTile("Escalated cases", "Queue state, with a supervisor", (c) => c.queueState === "escalated"),
+  ];
+
+  const toggleType = (t: DiscrepancyType) =>
+    setFilters((f) => ({
+      ...f,
+      types: f.types.includes(t) ? f.types.filter((x) => x !== t) : [...f.types, t],
+    }));
+
+  const onSort = (key: QueueSortKey) => {
+    if (key === sortKey) {
+      setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDirection("asc");
+    }
+  };
 
   const rail: RailStep[] = cdr
     ? CDR_STATUS_ORDER.map((s) => ({
@@ -179,37 +333,14 @@ export default function CdrWorkbenchPage() {
           </h1>
           <p className="text-[13px] text-[#64748B] mt-1">
             The discrepancy is worked here, not just listed. Auto-raised from intake variance,
-            evidenced digitally, and closed through one of five final actions.
+            queued to an owner against a {CDR_SLA_HOURS}h target, evidenced digitally, and closed
+            through one of five final actions.
             {isHq ? " All sites." : ` ${scope} only.`}
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: "Open CDRs", value: openCount, tone: "#DC2626" },
-          { label: "Auto-raised from variance", value: autoRaised, tone: "#1B4F8B" },
-          {
-            label: "Awaiting instruction",
-            value: cdrs.filter((c) => c.status === "awaiting-instruction").length,
-            tone: "#D97706",
-          },
-          {
-            label: "Escalations",
-            value: cdrs.reduce((n, c) => n + cdrEscalations(c), 0),
-            tone: "#7C3AED",
-          },
-        ].map((k) => (
-          <div key={k.label} className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
-            <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">
-              {k.label}
-            </p>
-            <p className="text-[24px] font-bold mt-1" style={{ color: k.tone }}>
-              {k.value}
-            </p>
-          </div>
-        ))}
-      </div>
+      <QueueKpiStrip tiles={tiles} />
 
       {/* FC-04's entry decision — including the No edge, which leaves no
           record behind and so is invisible on a list of CDRs alone. */}
@@ -293,16 +424,17 @@ export default function CdrWorkbenchPage() {
         )}
       </div>
 
-      {/* FC-04 §02 — the nine types, with the three that auto-raise marked */}
+      {/* FC-04 §02 — the nine types, doubling as the queue's quick filter */}
       <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
         <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
           <div>
             <h3 className="text-[14px] font-semibold text-[#0F172A]">
               Discrepancy types — FC-04 §02
             </h3>
-            <p className="text-[11px] text-[#94A3B8] mt-0.5">
-              Nine types. The three highlighted fall straight out of intake variance and open a CDR
-              without an operator — the FC-04 §01 amendment.
+            <p className="text-[11px] text-[#94A3B8] mt-0.5 max-w-[72ch]">
+              Nine types. The three marked with a bolt fall straight out of intake variance and open
+              a CDR without an operator — the FC-04 §01 amendment. Click any chip to narrow the
+              queue below; chips combine, so &ldquo;damage or leakage&rdquo; is one click each.
             </p>
           </div>
           <span className="h-[22px] px-2.5 rounded-full bg-[#EBF0F7] text-[#1B4F8B] text-[10px] font-bold inline-flex items-center gap-1">
@@ -313,73 +445,105 @@ export default function CdrWorkbenchPage() {
         <div className="flex flex-wrap gap-2">
           {(Object.keys(DISCREPANCY_LABEL) as DiscrepancyType[]).map((t) => {
             const auto = VARIANCE_DERIVED_TYPES.includes(t);
-            const active = cdr?.type === t;
+            const picked = filters.types.includes(t);
+            const count = cdrs.filter((c) => c.type === t).length;
             return (
-              <span
+              <button
                 key={t}
-                className="h-[28px] px-3 rounded-full text-[12px] font-semibold inline-flex items-center gap-1.5 border"
+                type="button"
+                onClick={() => toggleType(t)}
+                className="h-[28px] px-3 rounded-full text-[12px] font-semibold inline-flex items-center gap-1.5 border cursor-pointer transition-colors"
                 style={{
-                  backgroundColor: active ? "#FEE2E2" : auto ? "#EBF0F7" : "#F8FAFC",
-                  color: active ? "#DC2626" : auto ? "#1B4F8B" : "#64748B",
-                  borderColor: active ? "#FCA5A5" : auto ? "#C7D7EC" : "#E2E8F0",
+                  backgroundColor: picked ? "#0B2545" : auto ? "#EBF0F7" : "#F8FAFC",
+                  color: picked ? "#FFFFFF" : auto ? "#1B4F8B" : "#64748B",
+                  borderColor: picked ? "#0B2545" : auto ? "#C7D7EC" : "#E2E8F0",
                 }}
               >
                 {auto && <Zap size={10} />}
                 {DISCREPANCY_LABEL[t]}
-              </span>
+                <span style={{ opacity: 0.7 }}>{count}</span>
+              </button>
             );
           })}
+          {filters.types.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setFilters((f) => ({ ...f, types: [] }))}
+              className="h-[28px] px-3 rounded-full text-[12px] font-semibold inline-flex items-center border border-[#E2E8F0] text-[#64748B] bg-white cursor-pointer transition-colors hover:bg-[#F8FAFC]"
+            >
+              Clear types
+            </button>
+          )}
         </div>
       </div>
 
       {cdrs.length === 0 ? (
         <EmptyState
           title="No CDRs at this site"
-          description="A CDR opens automatically when FC-01 intake variance exceeds tolerance, or manually from the exceptions queue."
+          description="A CDR opens automatically when FC-01 intake variance exceeds tolerance, or manually from an FC-08 dispatch decision."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Register */}
-          <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
-              <ClipboardList size={15} className="text-[#64748B]" />
-              <h3 className="text-[14px] font-semibold text-[#0F172A]">CDR register</h3>
-            </div>
-            <div className="max-h-[560px] overflow-y-auto">
-              {cdrs.map((c) => (
+        <>
+          <QueueFilterBar
+            filters={filters}
+            onChange={setFilters}
+            owners={owners}
+            cargoClasses={cargoClasses}
+            showing={visible.length}
+            total={cdrs.length}
+          />
+
+          {visible.length === 0 ? (
+            <EmptyState
+              title="No CDRs match these filters"
+              description="Clear a facet to widen the queue. Nothing has been closed — the filters hide rows, they do not resolve them."
+            />
+          ) : (
+            <CdrQueueTable
+              rows={visible}
+              selectedId={cdr?.id ?? null}
+              onSelect={setSelectedId}
+              sortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={onSort}
+              onAction={(verb, row) =>
+                setActionLog((prev) => [...prev, `${verb} — ${row.cdrRef}`])
+              }
+            />
+          )}
+
+          {actionLog.length > 0 && (
+            <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+                <h3 className="text-[14px] font-semibold text-[#0F172A]">Queue actions — this session</h3>
                 <button
-                  key={c.id}
-                  onClick={() => {
-                    setSelectedId(c.id);
-                    setDraftAction(null);
-                  }}
-                  className="w-full text-left px-5 py-3 border-b border-[#F1F5F9] last:border-0 hover:bg-[#F8FAFC] transition-colors cursor-pointer"
-                  style={{ backgroundColor: cdr?.id === c.id ? "#EBF0F7" : undefined }}
+                  type="button"
+                  onClick={() => setActionLog([])}
+                  className="h-7 px-3 rounded-lg text-[12px] font-semibold border border-[#E2E8F0] text-[#64748B] cursor-pointer transition-colors hover:bg-[#F8FAFC]"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-[12px] font-semibold text-[#0F172A]">
-                      {c.cdrRef}
-                    </span>
-                    {c.autoRaised && (
-                      <span className="h-[18px] px-1.5 rounded bg-[#EBF0F7] text-[#1B4F8B] text-[9px] font-bold inline-flex items-center gap-0.5">
-                        <Zap size={8} />
-                        AUTO
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[12px] text-[#64748B] mt-0.5">
-                    {c.AWBNO} · {DISCREPANCY_LABEL[c.type]}
-                  </p>
-                  <p className="text-[11px] text-[#94A3B8] mt-0.5">
-                    {CDR_STATUS_LABEL[c.status].split(". ")[1] ?? c.status}
-                  </p>
+                  Clear
                 </button>
-              ))}
+              </div>
+              <ol className="flex flex-col gap-1">
+                {actionLog.map((entry, i) => (
+                  <li key={`${entry}-${i}`} className="text-[12px] text-[#0F172A]">
+                    <span className="font-mono text-[10px] text-[#94A3B8] mr-2">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    {entry}
+                  </li>
+                ))}
+              </ol>
+              <p className="text-[11px] text-[#D97706] mt-3 pt-3 border-t border-[#F1F5F9]">
+                The demo has no backend. Assign, Escalate, Mark resolved and Add note move the
+                screen, not a record — shown because the canonical workbench had no way to say these
+                verbs exist.
+              </p>
             </div>
-          </div>
+          )}
 
           {cdr && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5">
               {/* Header card */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -396,10 +560,79 @@ export default function CdrWorkbenchPage() {
                     </div>
                     <p className="text-[12px] text-[#64748B] mt-1.5">
                       Raised {formatDateTime(cdr.raisedAt)} by{" "}
-                      <span className="font-medium text-[#0F172A]">{cdr.raisedBy}</span>
+                      <span className="font-medium text-[#0F172A]">{cdr.raisedBy}</span> ·{" "}
+                      {formatAge(cdr.ageHours)} old
                     </p>
                   </div>
                   <AwbLink awbNo={cdr.AWBNO} awbId={cdr.awbId} />
+                </div>
+
+                {/* The queue facts, which the FC-04 record does not carry */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-4 pt-4 border-t border-[#F1F5F9]">
+                  {(
+                    [
+                      [
+                        "Owner",
+                        cdr.owner,
+                        cdr.owner === CDR_UNASSIGNED ? "#D97706" : "#0F172A",
+                      ],
+                      ["Priority", CDR_PRIORITY_LABEL[cdr.priority], "#0F172A"],
+                      [
+                        "Age",
+                        `${formatAge(cdr.ageHours)}${cdr.overSla ? ` · past the ${CDR_SLA_HOURS}h target` : ""}`,
+                        cdr.overSla ? "#DC2626" : "#16A34A",
+                      ],
+                      ["Cargo class", `${cdr.cargoClassAbbr} — ${cdr.cargoClassName}`, "#0F172A"],
+                      ["Consignee", cdr.consignee, "#0F172A"],
+                      [
+                        "Pieces affected",
+                        cdr.piecesAffected === null ? "Not recorded" : String(cdr.piecesAffected),
+                        cdr.piecesAffected === null ? "#CBD5E1" : "#0F172A",
+                      ],
+                      ["Origin", CDR_ORIGIN_LABEL[cdr.origin], "#0F172A"],
+                      [
+                        "Raised against",
+                        cdr.sourceRef
+                          ? [
+                              cdr.sourceRef.gatePassNo && `Gate pass ${cdr.sourceRef.gatePassNo}`,
+                              cdr.sourceRef.pieceId && `Piece ${cdr.sourceRef.pieceId}`,
+                              cdr.sourceRef.podId && `POD ${cdr.sourceRef.podId}`,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")
+                          : "The AWB itself",
+                        "#0F172A",
+                      ],
+                    ] as const
+                  ).map(([label, value, tone]) => (
+                    <div key={label} className="flex flex-col gap-1">
+                      <span className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wider">
+                        {label}
+                      </span>
+                      <span className="text-[13px] font-medium break-words" style={{ color: tone }}>
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* BC-2 — why the origin is worth a field of its own */}
+                <div
+                  className="mt-4 rounded-xl border px-4 py-3"
+                  style={{
+                    borderColor: isDispatchOrigin(cdr.origin) ? "#FED7AA" : "#C7D7EC",
+                    backgroundColor: isDispatchOrigin(cdr.origin) ? "#FFF7ED" : "#F8FAFC",
+                  }}
+                >
+                  <p className="text-[12px] text-[#0F172A]">
+                    <span className="font-semibold">
+                      {isDispatchOrigin(cdr.origin) ? "Dispatch-side" : "Intake-side"} —{" "}
+                      {CDR_ORIGIN_LABEL[cdr.origin]}.
+                    </span>{" "}
+                    {isDispatchOrigin(cdr.origin)
+                      ? "Raised by an FC-08 decision, so the subject is the record it disputes rather than the AWB. The discrepancy type cannot say this: a short pick and a short receipt are both `shortage`."
+                      : "Raised by the FC-01/FC-02 tolerance rule at intake, so the subject is the AWB itself. Filtering the queue by origin is the only way to keep these apart from the FC-08 routes."}
+                  </p>
                 </div>
 
                 {cdr.variance && (
@@ -435,7 +668,7 @@ export default function CdrWorkbenchPage() {
                   currentKey={cdr.status}
                   title="FC-04 progress"
                   tone="#DC2626"
-                  note="Steps 06–08 fan out to the messaging engine (M07); step 09 holds cargo in the quarantine zone (M05)."
+                  note="Steps 06–08 fan out to the messaging engine (M07); step 09 holds cargo in the quarantine zone (M05). The queue state on the register is the other axis — where this CDR sits in somebody's day, not in the flow."
                 />
 
                 <div className="flex flex-col gap-5">
@@ -663,7 +896,7 @@ export default function CdrWorkbenchPage() {
               <AuditStrip record={cdr} />
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

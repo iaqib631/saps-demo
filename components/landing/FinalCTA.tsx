@@ -39,7 +39,7 @@ export default function FinalCTA() {
         </p>
 
         <button
-          onClick={() => router.push("/uld-message-builder/sign-in")}
+          onClick={() => router.push("/login")}
           className="h-14 px-10 rounded-full text-[16px] font-semibold text-white cursor-pointer transition-all duration-300 whitespace-nowrap hover:shadow-2xl hover:scale-[1.05] active:scale-[0.97]"
           style={{ background: "linear-gradient(135deg, #7EC8E3, #5BA4C5)", boxShadow: "0 12px 40px rgba(91,164,197,0.35)" }}
         >

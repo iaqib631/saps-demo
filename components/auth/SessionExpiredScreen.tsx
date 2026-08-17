@@ -18,7 +18,7 @@ export default function SessionExpiredScreen() {
 
         <div className="flex flex-col gap-2.5">
           <Link
-            href="/uld-message-builder/sign-in"
+            href="/login"
             className="flex items-center justify-center gap-2 h-11 rounded-xl text-[14px] font-bold text-white cursor-pointer transition-colors hover:opacity-90"
             style={{ backgroundColor: "#0B2545" }}
           >
