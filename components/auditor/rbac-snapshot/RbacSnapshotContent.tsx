@@ -1,224 +1,425 @@
 "use client";
 
-import { useState } from "react";
-import LoadingSkeleton from "../../LoadingSkeleton";
-import EmptyState from "../../EmptyState";
-import ErrorState from "../../ErrorState";
-import DataTable from "../../DataTable";
-import { Search, Calendar, Download, GitCompare, Eye } from "lucide-react";
+/**
+ * /auditor/rbac-snapshot — FC-12 §06, "who could see what, as at a date".
+ *
+ * WHAT THIS SCREEN WAS. Fifteen rows of a component-local array naming seven
+ * people who exist nowhere else, against six invented booleans per screen
+ * (view / create / update / delete / approve / export), every row stamped
+ * `lastChangedBy: sys_admin`, under a snapshot-date picker that filtered
+ * nothing and a "Compare Snapshots" button that did nothing. lib/domain/access.ts
+ * cites this exact array as one of the four disjoint identity vocabularies in
+ * the demo — and it was the one an AUDITOR was being shown.
+ *
+ * WHAT IT IS NOW. `SiteAdminDelegation` is a real, site-keyed, revocable record
+ * carrying the six CMTS audit columns, and `effectiveRights()` computes
+ * requested-versus-effective depth per surface against PORTAL_GRANT_CEILING. So
+ * the grid is the same grid with a model behind it — and it shows something the
+ * old one structurally could not: where a site tried to grant more than the HQ
+ * ceiling allows, and what survived.
+ *
+ * AND THE DATE PICKER NOW WORKS. Existence is dated — CreatedDate on every
+ * grant, UpdatedDate on every withdrawal — so a snapshot taken in June shows
+ * PEW with an administrator and today's shows it with none. What is NOT dated
+ * is the CONTENT of a grant: there is one `surfaces` map per row and no history
+ * of it. The screen states that limit beside the picker rather than letting a
+ * reviewer assume the depths roll back too, because a false grant history is
+ * the worst thing this particular screen could be wrong about.
+ */
 
-interface RbacRow {
-  user: string;
-  username: string;
-  role: string;
-  group: string;
-  portal: string;
-  screen: string;
-  view: boolean;
-  create: boolean;
-  update: boolean;
-  delete: boolean;
-  approve: boolean;
-  export: boolean;
-  lastChangedBy: string;
-  lastChangedAt: string;
-}
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import { Download, KeyRound, Scale, Search, ShieldQuestion } from "lucide-react";
+import DataTable from "@/components/DataTable";
+import EmptyState from "@/components/EmptyState";
+import { HqCard, NotAvailable, SeverityPill } from "@/components/hq/HqUi";
+import { DEMO_NOW, SITES, formatDate, formatDateTime, type SiteScope } from "@/lib/domain";
+import {
+  DELEGATION_LIMITS,
+  DEPTH_LABEL,
+  PORTAL_GRANT_CEILING,
+  ROLE_SLUGS,
+  type RoleSlug,
+} from "@/lib/domain/access";
+import { AuditorStat } from "../AuditorUi";
+import { rbacSnapshot, snapshotBoundaries } from "../rbacModel";
 
-const mockRbacData: RbacRow[] = [
-  { user: "Ahmed Shaikh", username: "ahmed.shaikh", role: "warehouse_manager", group: "Operations", portal: "Warehouse Manager", screen: "Dashboard", view: true, create: true, update: true, delete: false, approve: true, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-05-22" },
-  { user: "Ahmed Shaikh", username: "ahmed.shaikh", role: "warehouse_manager", group: "Operations", portal: "Warehouse Manager", screen: "Putaway", view: true, create: true, update: true, delete: false, approve: false, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-05-22" },
-  { user: "Ahmed Shaikh", username: "ahmed.shaikh", role: "warehouse_manager", group: "Operations", portal: "Warehouse Manager", screen: "Picking", view: true, create: true, update: true, delete: false, approve: false, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-05-22" },
-  { user: "Zainab Khan", username: "zainab.khan", role: "cha_admin", group: "CHA", portal: "CHA", screen: "Dashboard", view: true, create: true, update: true, delete: false, approve: true, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-05-20" },
-  { user: "Zainab Khan", username: "zainab.khan", role: "cha_admin", group: "CHA", portal: "CHA", screen: "GD Filing", view: true, create: true, update: true, delete: false, approve: true, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-05-20" },
-  { user: "Omer Farooq", username: "omer.farooq", role: "finance_manager", group: "Finance", portal: "Finance Manager", screen: "Dashboard", view: true, create: true, update: true, delete: false, approve: true, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-06-01" },
-  { user: "Omer Farooq", username: "omer.farooq", role: "finance_manager", group: "Finance", portal: "Finance Manager", screen: "Invoice Generation", view: true, create: true, update: true, delete: false, approve: true, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-06-01" },
-  { user: "Omer Farooq", username: "omer.farooq", role: "finance_manager", group: "Finance", portal: "Finance Manager", screen: "Waiver Workflow", view: true, create: false, update: false, delete: false, approve: true, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-06-01" },
-  { user: "Bilal Ahmed", username: "bilal.ahmed", role: "cha_user", group: "CHA", portal: "CHA", screen: "Dashboard", view: true, create: false, update: false, delete: false, approve: false, export: false, lastChangedBy: "cha_admin", lastChangedAt: "2026-05-28" },
-  { user: "Fatima Malik", username: "fatima.malik", role: "auditor", group: "Audit", portal: "Auditor", screen: "Cargo Trace", view: true, create: false, update: false, delete: false, approve: false, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-06-05" },
-  { user: "Fatima Malik", username: "fatima.malik", role: "auditor", group: "Audit", portal: "Auditor", screen: "Financial Trace", view: true, create: false, update: false, delete: false, approve: false, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-06-05" },
-  { user: "Fatima Malik", username: "fatima.malik", role: "auditor", group: "Audit", portal: "Auditor", screen: "RBAC Snapshot", view: true, create: false, update: false, delete: false, approve: false, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-06-05" },
-  { user: "Sana Tariq", username: "sana.tariq", role: "sys_admin", group: "Admin", portal: "Admin", screen: "Users", view: true, create: true, update: true, delete: true, approve: true, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-04-15" },
-  { user: "Sana Tariq", username: "sana.tariq", role: "sys_admin", group: "Admin", portal: "Admin", screen: "Roles & Permissions", view: true, create: true, update: true, delete: true, approve: true, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-04-15" },
-  { user: "Khalid Mehmood", username: "khalid.mehmood", role: "gate_entry", group: "Operations", portal: "Gate Entry", screen: "Vehicle Entry", view: true, create: true, update: true, delete: false, approve: false, export: true, lastChangedBy: "sys_admin", lastChangedAt: "2026-05-10" },
+const SCOPE_OPTIONS: Array<{ value: SiteScope; label: string }> = [
+  { value: "HQ", label: "All nodes" },
+  ...SITES.map((s) => ({ value: s.code as SiteScope, label: s.code })),
 ];
 
-const portals = ["All", "Warehouse Manager", "Gate Entry", "CHA", "Finance Manager", "Auditor", "Admin", "ULD Message Builder"];
-const roles = ["All", "warehouse_manager", "cha_admin", "cha_user", "finance_manager", "auditor", "sys_admin", "gate_entry"];
-
 export default function RbacSnapshotContent() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [snapshotDate, setSnapshotDate] = useState("2026-06-08");
-  const [filterPortal, setFilterPortal] = useState("All");
-  const [filterRole, setFilterRole] = useState("All");
-  const [searchUser, setSearchUser] = useState("");
-  const [detailOpen, setDetailOpen] = useState<string | null>(null);
+  const boundaries = useMemo(() => snapshotBoundaries(), []);
 
-  const filteredData = mockRbacData.filter((r) => {
-    if (filterPortal !== "All" && r.portal !== filterPortal) return false;
-    if (filterRole !== "All" && r.role !== filterRole) return false;
-    if (searchUser && !r.user.toLowerCase().includes(searchUser.toLowerCase()) && !r.username.toLowerCase().includes(searchUser.toLowerCase())) return false;
-    return true;
-  });
+  const [asAt, setAsAt] = useState(DEMO_NOW.slice(0, 10));
+  const [scope, setScope] = useState<SiteScope>("HQ");
+  const [role, setRole] = useState<RoleSlug | "All">("All");
+  const [q, setQ] = useState("");
+  const [showExport, setShowExport] = useState(false);
+  /* §06 asks who COULD see what at the instant, so the grid answers that by
+     default. Grants already withdrawn by then are one toggle away rather than
+     absent, because "this principal held it until 30 Jun" is a finding too. */
+  const [includeWithdrawn, setIncludeWithdrawn] = useState(false);
 
-  const permIcon = (val: boolean) => (
-    <span
-      className="inline-flex items-center justify-center w-6 h-6 rounded text-[10px] font-bold"
-      style={{
-        backgroundColor: val ? "#DCFCE7" : "#F1F5F9",
-        color: val ? "#16A34A" : "#CBD5E1",
-      }}
-    >
-      {val ? "✓" : "—"}
-    </span>
+  /* The picker gives a date; the snapshot is taken at the end of that day, so
+     a grant issued at 10:20 on the chosen date is in it. */
+  const snapshot = useMemo(() => rbacSnapshot(`${asAt}T23:59:59+05:00`, scope), [asAt, scope]);
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return snapshot.rows.filter((r) => {
+      if (!includeWithdrawn && !r.inForce) return false;
+      if (role !== "All" && !r.roles.includes(role)) return false;
+      if (!needle) return true;
+      return (
+        r.name.toLowerCase().includes(needle) ||
+        r.username.toLowerCase().includes(needle) ||
+        r.email.toLowerCase().includes(needle) ||
+        r.surface.label.toLowerCase().includes(needle)
+      );
+    });
+  }, [snapshot.rows, role, q, includeWithdrawn]);
+
+  /* Only the nodes actually in scope — selecting KHI must not report LHE and
+     PEW as uncovered when they have simply been filtered out. */
+  const nodesInScope = scope === "HQ" ? SITES.map((s) => s.code) : [scope];
+  const uncovered = nodesInScope.filter(
+    (code) => !snapshot.rows.some((r) => r.scope === code && r.inForce),
   );
 
-  if (loading) return <LoadingSkeleton rows={8} columns={13} />;
-  if (error) return <ErrorState message={error} onRetry={() => setError("")} />;
+  const isToday = asAt === DEMO_NOW.slice(0, 10);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div />
-        <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 h-9 px-4 rounded-lg border border-[#E2E8F0] text-[12px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC] cursor-pointer transition-colors whitespace-nowrap">
-            <GitCompare size={14} />
-            Compare Snapshots
-          </button>
-          <button className="flex items-center gap-1.5 h-9 px-4 rounded-lg text-[12px] font-semibold text-white cursor-pointer transition-colors hover:opacity-90 whitespace-nowrap" style={{ backgroundColor: "#0B2545" }}>
-            <Download size={14} />
-            Export Snapshot
-          </button>
-        </div>
-      </div>
-
+      {/* ---- Controls -------------------------------------------------- */}
       <div className="rounded-[14px] border border-[#E2E8F0] bg-white p-5 shadow-sm">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <Calendar size={14} className="text-[#64748B]" />
-            <span className="text-[12px] font-medium text-[#64748B]">Snapshot Date:</span>
+            <span className="text-[12px] font-medium text-[#64748B]">Snapshot as at</span>
             <input
               type="date"
-              value={snapshotDate}
-              onChange={(e) => setSnapshotDate(e.target.value)}
-              className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[12px] text-[#0F172A] outline-none focus:border-[#2E75B6]"
+              value={asAt}
+              onChange={(e) => setAsAt(e.target.value)}
+              className="h-9 rounded-lg border border-[#E2E8F0] px-3 text-[12px] text-[#0F172A] outline-none focus:border-[#2E75B6]"
             />
           </div>
           <select
-            value={filterPortal}
-            onChange={(e) => setFilterPortal(e.target.value)}
-            className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[12px] text-[#0F172A] outline-none focus:border-[#2E75B6] bg-white pr-8"
+            value={scope}
+            onChange={(e) => setScope(e.target.value as SiteScope)}
+            className="h-9 rounded-lg border border-[#E2E8F0] bg-white pl-3 pr-8 text-[12px] text-[#0F172A] outline-none focus:border-[#2E75B6]"
           >
-            {portals.map((p) => (
-              <option key={p} value={p}>{p === "All" ? "All Portals" : p}</option>
+            {SCOPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
             ))}
           </select>
           <select
-            value={filterRole}
-            onChange={(e) => setFilterRole(e.target.value)}
-            className="h-9 px-3 rounded-lg border border-[#E2E8F0] text-[12px] text-[#0F172A] outline-none focus:border-[#2E75B6] bg-white pr-8"
+            value={role}
+            onChange={(e) => setRole(e.target.value as RoleSlug | "All")}
+            className="h-9 rounded-lg border border-[#E2E8F0] bg-white pl-3 pr-8 text-[12px] text-[#0F172A] outline-none focus:border-[#2E75B6]"
           >
-            {roles.map((r) => (
-              <option key={r} value={r}>{r === "All" ? "All Roles" : r}</option>
+            <option value="All">All roles</option>
+            {ROLE_SLUGS.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
             ))}
           </select>
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
             <input
               type="text"
-              placeholder="Search user..."
-              value={searchUser}
-              onChange={(e) => setSearchUser(e.target.value)}
-              className="h-9 pl-9 pr-3 rounded-lg border border-[#E2E8F0] text-[12px] text-[#0F172A] placeholder:text-[#94A3B8] outline-none focus:border-[#2E75B6] w-[180px]"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Principal or surface…"
+              className="h-9 w-[200px] rounded-lg border border-[#E2E8F0] pl-9 pr-3 text-[12px] text-[#0F172A] outline-none placeholder:text-[#94A3B8] focus:border-[#2E75B6]"
             />
           </div>
+          <label className="flex cursor-pointer items-center gap-2 text-[12px] text-[#64748B]">
+            <input
+              type="checkbox"
+              checked={includeWithdrawn}
+              onChange={(e) => setIncludeWithdrawn(e.target.checked)}
+              className="h-3.5 w-3.5 cursor-pointer accent-[#0B2545]"
+            />
+            Include grants withdrawn by this date
+          </label>
+          <button
+            onClick={() => setShowExport((v) => !v)}
+            className="flex h-9 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg px-4 text-[12px] font-semibold text-white transition-colors hover:opacity-90"
+            style={{ backgroundColor: "#0B2545" }}
+          >
+            <Download size={14} />
+            {showExport ? "Hide export manifest" : "Export snapshot"}
+          </button>
         </div>
+
+        {/* The dates on which this snapshot actually changes. A picker whose
+            every value returns the same grid reads as broken even when it is
+            correct, so the boundaries are offered rather than hunted for. */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#94A3B8]">
+            Changes on
+          </span>
+          {boundaries.map((b) => (
+            <button
+              key={b.date}
+              onClick={() => setAsAt(b.date)}
+              title={b.label}
+              className="h-7 cursor-pointer rounded-lg border px-2.5 font-mono text-[11px] transition-colors"
+              style={{
+                borderColor: asAt === b.date ? "#1B4F8B" : "#E2E8F0",
+                color: asAt === b.date ? "#1B4F8B" : "#64748B",
+                backgroundColor: asAt === b.date ? "#EBF0F7" : "white",
+              }}
+            >
+              {b.date}
+            </button>
+          ))}
+        </div>
+
+        <p className="mt-3 max-w-[92ch] text-[11px] leading-relaxed text-[#64748B]">
+          <span className="font-semibold text-[#475569]">What &quot;as at&quot; means here: </span>
+          a grant appears if it had been issued by this date and had not yet been withdrawn.
+          Existence is dated; the surfaces and roles ON a grant are not versioned, so an earlier
+          snapshot shows that date&apos;s principals at today&apos;s depths. Selecting a node
+          returns that node&apos;s own grants plus the cross-site grant, which is in force at every
+          node by construction.
+          {!isToday && (
+            <span className="font-semibold text-[#B45309]">
+              {" "}
+              You are looking at {formatDate(`${asAt}T12:00:00+05:00`)}, not today.
+            </span>
+          )}
+        </p>
+
+        {showExport && (
+          <div className="mt-4 rounded-[12px] border border-dashed border-[#CBD5E1] bg-[#F8FAFC] px-4 py-3">
+            <p className="text-[12px] font-semibold text-[#0F172A]">
+              Export manifest — computed, not written
+            </p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-[#64748B]">
+              {rows.length} grant rows across {snapshot.principals} principals, as at{" "}
+              {formatDate(`${asAt}T12:00:00+05:00`)}, scope {scope}. Columns: principal, username,
+              email, node, roles, surface, requested depth, effective depth, capping rule, in
+              force, granted by, granted at, changed by, changed at.
+            </p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-[#94A3B8]">
+              No file is produced. There is no document or file writer anywhere in this build, so a
+              button that reported a successful download would be reporting something that did not
+              happen — which is precisely what the previous version of this screen did.
+            </p>
+          </div>
+        )}
       </div>
 
-      <DataTable
-        columns={[
-          { key: "user", header: "User", width: "130px" },
-          { key: "username", header: "Username", width: "120px" },
-          { key: "role", header: "Role", width: "140px" },
-          { key: "group", header: "Group", width: "100px" },
-          { key: "portal", header: "Portal", width: "140px" },
-          { key: "screen", header: "Screen", width: "140px" },
-          { key: "view", header: "View", width: "60px" },
-          { key: "create", header: "Create", width: "60px" },
-          { key: "update", header: "Update", width: "60px" },
-          { key: "delete", header: "Delete", width: "60px" },
-          { key: "approve", header: "Approve", width: "65px" },
-          { key: "export", header: "Export", width: "60px" },
-          { key: "lastChangedBy", header: "Last Changed By", width: "120px" },
-          { key: "lastChangedAt", header: "Last Changed At", width: "110px" },
-          { key: "action", header: "Action", width: "80px" },
-        ]}
-        rows={filteredData.map((r, idx) => ({
-          user: <span className="text-[12px] font-medium text-[#0F172A]">{r.user}</span>,
-          username: <span className="text-[12px] text-[#1B4F8B] font-medium">{r.username}</span>,
-          role: <span className="text-[12px] text-[#334155]">{r.role}</span>,
-          group: <span className="text-[11px] text-[#64748B]">{r.group}</span>,
-          portal: <span className="text-[12px] text-[#0F172A]">{r.portal}</span>,
-          screen: <span className="text-[12px] text-[#334155]">{r.screen}</span>,
-          view: permIcon(r.view),
-          create: permIcon(r.create),
-          update: permIcon(r.update),
-          delete: permIcon(r.delete),
-          approve: permIcon(r.approve),
-          export: permIcon(r.export),
-          lastChangedBy: <span className="text-[11px] text-[#64748B]">{r.lastChangedBy}</span>,
-          lastChangedAt: <span className="text-[11px] font-mono text-[#64748B]">{r.lastChangedAt}</span>,
-          action: (
-            <button
-              onClick={() => setDetailOpen(detailOpen === r.username + r.screen ? null : r.username + r.screen)}
-              className="flex items-center gap-1 h-7 px-2 rounded-lg border border-[#E2E8F0] text-[11px] font-medium text-[#0F172A] hover:bg-[#F8FAFC] cursor-pointer transition-colors whitespace-nowrap"
-            >
-              <Eye size={12} />
-              Detail
-            </button>
-          ),
-        }))}
-        headerStyle="navy"
-      />
+      {/* ---- Figures ---------------------------------------------------- */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <AuditorStat
+          label="Grants in force at this instant"
+          value={`${snapshot.inForce}`}
+          detail={`${snapshot.principals} existed by then · ${snapshot.withdrawnByThen} had already been withdrawn · ${snapshot.notYetIssued} not yet issued`}
+          source="rbacSnapshot(asAt, scope) · components/auditor/rbacModel.ts"
+          severity={snapshot.inForce === 0 ? "critical" : "neutral"}
+        />
+        <AuditorStat
+          label="Grant rows in force"
+          value={`${snapshot.rows.filter((r) => r.inForce).length}`}
+          detail={`One row per principal per granted surface. ${snapshot.rows.length - snapshot.rows.filter((r) => r.inForce).length} further rows belong to grants already withdrawn by this date — shown only when the box above is ticked.`}
+          source="effectiveRights(delegation) · lib/domain/access.ts"
+        />
+        <AuditorStat
+          label="Capped by the HQ ceiling"
+          value={`${snapshot.capped}`}
+          detail="Rows where a site-tier grant asked for delegate depth on an HQ-reserved surface and got administer instead. Requested and effective are both kept — flattening them loses the audit."
+          source="EffectiveSurfaceRight.cappedBy · lib/domain/access.ts"
+          severity={snapshot.capped > 0 ? "warning" : "neutral"}
+          status={snapshot.capped > 0 ? "trimmed" : undefined}
+        />
+        <AuditorStat
+          label="Nodes with no grant of their own"
+          value={`${uncovered.length}`}
+          detail={
+            uncovered.length === 0
+              ? `Every node in scope holds at least one grant of its own as at this date.`
+              : `${uncovered.join(", ")} — reachable only through the cross-site grant, which is a different thing from being administered locally.`
+          }
+          source="rbacSnapshot(asAt, scope).rows · SiteAdminDelegation.scope"
+          severity={uncovered.length > 0 ? "critical" : "good"}
+          href="/hq/site-admins"
+        />
+      </div>
 
-      {filteredData.length === 0 && (
+      {/* ---- Grid -------------------------------------------------------- */}
+      {rows.length === 0 ? (
         <EmptyState
-          title="No RBAC records"
-          description="No matching RBAC entries for the selected filters."
+          title="No grant matches"
+          description="No delegation had been issued for this scope by the selected date, or the filters exclude every row. The register is small and deliberately asymmetric — that is a finding, not an empty screen."
+        />
+      ) : (
+        <DataTable
+          /* Re-key on the filters so DataTable's own page index resets — a
+             snapshot narrowed from 38 rows to four must not open on page four. */
+          key={`${asAt}-${scope}-${role}-${q}-${includeWithdrawn}`}
+          columns={[
+            { key: "principal", header: "Principal", width: "150px" },
+            { key: "username", header: "Username", width: "130px" },
+            { key: "node", header: "Node", width: "80px" },
+            { key: "roles", header: "Roles granted", width: "180px" },
+            { key: "surface", header: "Surface", width: "200px" },
+            { key: "requested", header: "Requested", width: "120px" },
+            { key: "effective", header: "Effective", width: "120px" },
+            { key: "capped", header: "Capped by", width: "220px" },
+            { key: "force", header: "In force", width: "100px" },
+            { key: "granted", header: "Granted", width: "170px" },
+            { key: "changed", header: "Last change", width: "170px" },
+          ]}
+          rows={rows.map((r) => ({
+            principal: <span className="text-[12px] font-medium text-[#0F172A]">{r.name}</span>,
+            username: (
+              <span className="text-[12px] font-medium text-[#1B4F8B]">{r.username}</span>
+            ),
+            node: (
+              <span className="inline-flex h-6 items-center rounded-full bg-[#F1F5F9] px-2 text-[11px] font-semibold text-[#334155]">
+                {r.scope}
+              </span>
+            ),
+            roles: <span className="text-[11px] text-[#64748B]">{r.roles.join(", ")}</span>,
+            surface: (
+              <Link
+                href={r.surface.href}
+                className="text-[12px] text-[#334155] no-underline hover:underline"
+              >
+                {r.surface.label}
+              </Link>
+            ),
+            requested: (
+              <span className="text-[12px] text-[#334155]">{DEPTH_LABEL[r.requested]}</span>
+            ),
+            effective: (
+              <span
+                className="text-[12px] font-semibold"
+                style={{ color: r.cappedBy ? "#D97706" : "#0F172A" }}
+              >
+                {DEPTH_LABEL[r.effective]}
+              </span>
+            ),
+            capped: r.cappedBy ? (
+              <span className="text-[11px] text-[#B45309]">{r.cappedBy}</span>
+            ) : (
+              <span className="text-[11px] text-[#CBD5E1]">—</span>
+            ),
+            force: (
+              <SeverityPill
+                severity={r.inForce ? "good" : "neutral"}
+                label={r.inForce ? "In force" : "Withdrawn"}
+              />
+            ),
+            granted: (
+              <span className="text-[11px] text-[#64748B]">
+                {r.grantedBy}
+                <br />
+                <span className="font-mono">{formatDate(r.grantedAt)}</span>
+              </span>
+            ),
+            changed: r.changedAt ? (
+              <span className="text-[11px] text-[#64748B]">
+                {r.changedBy ?? "—"}
+                <br />
+                <span className="font-mono">{formatDate(r.changedAt)}</span>
+              </span>
+            ) : (
+              <span className="text-[11px] text-[#CBD5E1]">never amended</span>
+            ),
+          }))}
+          headerStyle="navy"
         />
       )}
 
-      {detailOpen && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setDetailOpen(null)}>
-          <div
-            className="bg-white rounded-2xl shadow-xl border border-[#E2E8F0] w-[520px] max-h-[80vh] overflow-y-auto p-6"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <h3 className="text-[16px] font-bold text-[#0F172A]">RBAC Detail</h3>
-              </div>
-              <button onClick={() => setDetailOpen(null)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#F8FAFC] text-[#64748B] cursor-pointer">
-                ✕
-              </button>
-            </div>
-            {(() => {
-              const record = mockRbacData.find((r) => r.username + r.screen === detailOpen);
-              if (!record) return null;
-              return (
-                <div className="space-y-3">
-                  {Object.entries(record).map(([key, value]) => (
-                    <div key={key} className="flex justify-between py-2 border-b border-[#F1F5F9]">
-                      <span className="text-[12px] text-[#94A3B8] font-medium uppercase tracking-wide">{key}</span>
-                      <span className="text-[13px] font-semibold text-[#0F172A]">{typeof value === "boolean" ? (value ? "Yes" : "No") : String(value)}</span>
-                    </div>
-                  ))}
+      {/* ---- The ceiling ------------------------------------------------- */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <HqCard
+          title="What a site-tier grant may reach"
+          icon={Scale}
+          source="PORTAL_GRANT_CEILING · lib/domain/access.ts"
+          intro="FC-12 §04 draws the portals as separate surfaces; this is the authority question that follows from it, and it is the one no site screen can answer about itself."
+        >
+          <div className="flex flex-col gap-3">
+            {PORTAL_GRANT_CEILING.map((p) => (
+              <div key={p.portal} className="rounded-[12px] border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[13px] font-semibold text-[#0F172A]">{p.label}</span>
+                  <SeverityPill
+                    severity={p.grantableBySiteAdmin ? "good" : "critical"}
+                    label={
+                      p.grantableBySiteAdmin
+                        ? `Up to ${DEPTH_LABEL[p.ceiling ?? "read"]}`
+                        : "Not grantable by a site admin"
+                    }
+                  />
                 </div>
-              );
-            })()}
+                <p className="mt-1.5 text-[11px] leading-relaxed text-[#64748B]">{p.reason}</p>
+              </div>
+            ))}
           </div>
+        </HqCard>
+
+        <HqCard
+          title="What a grant is not"
+          icon={KeyRound}
+          source="DELEGATION_LIMITS · lib/domain/access.ts"
+          intro="Held as data in the domain so every screen that reads or writes a delegation states the same limits, rather than three screens paraphrasing them and the demo over-claiming by accident."
+        >
+          <ul className="flex flex-col gap-2.5">
+            {DELEGATION_LIMITS.map((l) => (
+              <li key={l.title}>
+                <p className="text-[12px] font-semibold text-[#0F172A]">{l.title}</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-[#64748B]">{l.detail}</p>
+              </li>
+            ))}
+          </ul>
+        </HqCard>
+      </div>
+
+      {/* ---- Gaps --------------------------------------------------------- */}
+      <HqCard
+        title="Not shown on this snapshot, and why"
+        icon={ShieldQuestion}
+        source="no fixture — stated rather than estimated"
+        intro="Three things the previous version of this screen displayed. None of them has a record behind it."
+      >
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <NotAvailable
+            title="Compare two snapshots"
+            reason="Only the EXISTENCE of a grant is dated. There is one `surfaces` map and one `roles` array per delegation with no change log, so a diff between two dates could show principals appearing and disappearing but would show every depth as identical — which reads as 'nothing changed' rather than 'nothing is recorded'. The button is gone; the date picker, which does work, is not."
+            nearest="The boundary dates above: every instant on which this register actually changes, with what changed on each."
+          />
+          <NotAvailable
+            title="View / create / update / delete / approve / export per screen"
+            reason="Those six booleans exist in no model. A delegation grants a DEPTH on a surface — read, administer, or administer-and-delegate — and depth is the thing the HQ ceiling caps. The 17 × 78 permission matrix the six booleans came from lives in a component-local array on /admin/roles with no export and no site column, so it cannot be joined to a principal here."
+            nearest={`The depth model itself: ${Object.values(DEPTH_LABEL).join(", ")} — with requested and effective shown separately.`}
+          />
+          <NotAvailable
+            title="Every user in the estate"
+            reason="This register holds ADMINISTRATION grants — who may administer which node — not the full directory. /admin/users still keeps its twelve people in a component-local array whose only site hint is a free-text group string, so the two cannot be joined yet. Showing them side by side would imply a relationship that no key supports."
+            nearest="The delegation register, which is complete for what it covers and is the only identity store in the demo with a site key on it."
+          />
         </div>
-      )}
+
+        <div className="mt-4 rounded-[12px] border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+          <p className="text-[12px] font-semibold text-[#0F172A]">
+            The snapshot instant, and the one thing every other screen shows
+          </p>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-[#64748B]">
+            Every fixture in this demo is a single snapshot at {formatDateTime(DEMO_NOW)}. The
+            delegation register is the one store with enough dated history to answer &quot;as at&quot;
+            at all, and it answers it for existence only. Nothing on this screen carries a trend,
+            and there is no second period to trend against.
+          </p>
+        </div>
+      </HqCard>
     </div>
   );
 }
