@@ -70,6 +70,15 @@ export default function ExportBookingPage() {
     return kg > x.booking.allottedWeightKg;
   });
 
+  /*
+   * Counted at runtime rather than assumed: this list is one booking at LHE
+   * and four at KHI. With one row the picker chooses nothing and costs a
+   * column, and it can go without loss — bookingRef leads the detail card, and
+   * the AWB, channel, flight, destination, commodity and stage it carries are
+   * all in the field grid beneath it.
+   */
+  const onlyBooking = rows.length === 1;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -142,7 +151,20 @@ export default function ExportBookingPage() {
           description="FC-11 starts at §01 — booking information received from the airline or its GSA."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        /*
+          Sized to the rows — a booking reference, a channel badge and two
+          short lines — rather than to a third of the page, with the detail on
+          minmax(0,1fr) so a wide card scrolls itself instead of stretching
+          the grid.
+        */
+        <div
+          className={
+            onlyBooking
+              ? "grid grid-cols-1 gap-5"
+              : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5"
+          }
+        >
+          {!onlyBooking && (
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
               <CalendarClock size={15} className="text-[#64748B]" />
@@ -179,9 +201,10 @@ export default function ExportBookingPage() {
               })}
             </div>
           </div>
+          )}
 
           {c?.booking && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5 min-w-0">
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
                 <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-start justify-between gap-3 flex-wrap">
                   <div>

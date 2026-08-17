@@ -201,6 +201,21 @@ export default function ExportBillingPage() {
 
   const stamp = v ? printedAt(v) : null;
 
+  /*
+   * A list exists to choose among several. At LHE this site holds exactly one
+   * voucher, and a picker with one row chooses nothing while costing a column
+   * — which is what left the detail compressed and the left rail blank. The
+   * count is read at runtime, not assumed: the same screen holds five vouchers
+   * at KHI and six at HQ, and there the picker is doing real work.
+   *
+   * Dropping it here loses nothing. Every field the row carries is restated
+   * below: Voucherno, AWBNO, NETPAYABLE, GRDATE and Destination in the header
+   * card, DAYS in the clock card, and PAID both as the OUTSTANDING badge and
+   * in full on the settlement tab — with the KPI strip above already counting
+   * the unpaid. The record's identity and its state survive the removal.
+   */
+  const onlyVoucher = vouchers.length === 1;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -298,7 +313,21 @@ export default function ExportBillingPage() {
           description="A voucher is cut once the consignment leaves export warehousing (FC-11 §17) and the counter prices the days it was held."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        /*
+          The picker is sized to its rows — a voucher number, an AWB and a
+          date line — rather than to a third of the page. The detail track is
+          minmax(0,1fr) rather than 1fr so the master-vs-house table and the
+          charge build-up scroll inside their own containers instead of
+          widening the grid.
+        */
+        <div
+          className={
+            onlyVoucher
+              ? "grid grid-cols-1 gap-5"
+              : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5"
+          }
+        >
+          {!onlyVoucher && (
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <CardHead icon={<Receipt size={15} />} title="Vouchers" />
             <div className="max-h-[560px] overflow-y-auto">
@@ -334,9 +363,10 @@ export default function ExportBillingPage() {
               ))}
             </div>
           </div>
+          )}
 
           {v && recon && mirror && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5 min-w-0">
               {/* ---------------- Header ---------------- */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
                 <div className="flex items-start justify-between gap-3 flex-wrap">

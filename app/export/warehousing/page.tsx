@@ -146,6 +146,20 @@ export default function ExportWarehousingPage() {
   const blocked = classified.filter((x) => !classificationCleared(x.classification!));
   const returned = rows.filter((x) => x.warehousing?.returnedFromOffload);
 
+  /*
+   * Read at runtime: one consignment at LHE, four at KHI, five at HQ.
+   *
+   * The row is kept when it is alone rather than dropped, because the detail
+   * below never names the consignment — it opens on the 08 branch and works
+   * through classification, zone and put-away. The bin and the offload note
+   * are restated there, but only once the consignment has been put away, and
+   * the AWB is on this row and nowhere else at all; removing it would leave a
+   * page of decisions about a consignment it does not identify. Laid across
+   * the full width the row is one deep: no dead column, and the detail gets
+   * the whole content width.
+   */
+  const onlyConsignment = rows.length === 1;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -196,7 +210,19 @@ export default function ExportWarehousingPage() {
           description="Classification runs at E07, after security screening."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        /*
+          Sized to the rows — an AWB, a classification badge and a bin line —
+          rather than to a third of the page, with the detail on
+          minmax(0,1fr) so the put-away and verification cards scroll inside
+          their own containers instead of widening the grid.
+        */
+        <div
+          className={
+            onlyConsignment
+              ? "grid grid-cols-1 gap-5"
+              : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5"
+          }
+        >
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
               <Boxes size={15} className="text-[#64748B]" />
@@ -240,7 +266,7 @@ export default function ExportWarehousingPage() {
           </div>
 
           {c && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5 min-w-0">
               {/* The 08 branch */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
                 <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
