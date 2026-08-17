@@ -213,6 +213,18 @@ export default function ExportBuildupPage() {
 
   const withDisc = consignments.filter((x) => (rampGateFor(x.id)?.discrepancies.length ?? 0) > 0);
 
+  /*
+   * Read at runtime: one consignment at LHE, four at KHI, five at HQ.
+   *
+   * Kept rather than dropped when it is alone. The detail opens straight on
+   * the five ramp conditions and never names the consignment they gate: the
+   * stage rail carries the flight, but the AWB is on this row alone — the only
+   * other one on the screen sits on a discrepancy line, which is a different
+   * bill. Across the full width the row is one deep, so the picker costs no
+   * column and the detail takes the whole content width.
+   */
+  const onlyConsignment = consignments.length === 1;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -266,7 +278,19 @@ export default function ExportBuildupPage() {
       {consignments.length === 0 ? (
         <EmptyState title="No export consignments at this site" description="Build-up follows acceptance and screening." />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        /*
+          Sized to the rows — an AWB, a ready/blocked badge, a flight line and
+          an optional discrepancy-note badge — rather than to a third of the
+          page. The detail track is minmax(0,1fr) so the PFM comparison table
+          scrolls inside its own container instead of widening the grid.
+        */
+        <div
+          className={
+            onlyConsignment
+              ? "grid grid-cols-1 gap-5"
+              : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5"
+          }
+        >
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
               <Boxes size={15} className="text-[#64748B]" />
@@ -312,7 +336,7 @@ export default function ExportBuildupPage() {
           </div>
 
           {c && gate && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5 min-w-0">
               {/* Ramp gate */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden">
                 <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center justify-between gap-3 flex-wrap">

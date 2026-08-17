@@ -221,6 +221,19 @@ export default function ExportAcceptancePage() {
   );
   const outOfTolerance = consignments.filter((x) => x.weighment && !x.weighment.withinTolerance);
 
+  /*
+   * Read at runtime: this list is one consignment at LHE, four at KHI and five
+   * at HQ, so nothing here can be decided by hard-coding a count.
+   *
+   * Unlike the voucher screens, the row is not redundant when it is alone.
+   * `EXPORT_STAGE_LABEL` appears nowhere else on this page, and the HELD badge
+   * is only otherwise visible under the screening tab — so removing the picker
+   * would take facts off the screen rather than just take a column back. It is
+   * kept and laid across the full width instead, one row deep, which leaves no
+   * dead column and hands the detail the whole content width.
+   */
+  const onlyConsignment = consignments.length === 1;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -280,7 +293,19 @@ export default function ExportAcceptancePage() {
           description="FC-11 starts at booking; acceptance is §12 at the export counter."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        /*
+          Sized to the rows — an AWB, up to two badges, a destination line and
+          a stage line — rather than to a third of the page. The detail track
+          is minmax(0,1fr) so the acceptance line and house tables scroll
+          inside their own containers instead of widening the grid.
+        */
+        <div
+          className={
+            onlyConsignment
+              ? "grid grid-cols-1 gap-5"
+              : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5"
+          }
+        >
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
               <Truck size={15} className="text-[#64748B]" />
@@ -327,7 +352,7 @@ export default function ExportAcceptancePage() {
           </div>
 
           {c && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5 min-w-0">
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div>

@@ -138,6 +138,18 @@ export default function ExportCustomsPage() {
     count: rows.filter((x) => deskStatus(x) === s).length,
   }));
 
+  /*
+   * Counted off the *filtered* book, not the site's, because that is the list
+   * the picker actually offers: a chip that narrows five consignments to one
+   * leaves a picker that chooses nothing, and at LHE the site holds one row
+   * before any chip is touched. Dropping it costs nothing here — the AWB, the
+   * stage, where the file settled and how many rounds it took are all restated
+   * in the state card and the round history below. Zero is folded in as well:
+   * an empty book already says so in the register above, and a lone empty card
+   * beside nothing is the same dead column with less in it.
+   */
+  const onlyFile = visible.length <= 1;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -328,7 +340,20 @@ export default function ExportCustomsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/*
+          Sized to the rows — an AWB, an outcome badge and a rounds line —
+          rather than to a third of the page. The detail track is
+          minmax(0,1fr) so the round history and the PSW message table scroll
+          inside their own containers instead of widening the grid.
+        */}
+        <div
+          className={
+            onlyFile
+              ? "grid grid-cols-1 gap-5"
+              : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5"
+          }
+        >
+          {!onlyFile && (
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
               <Stamp size={15} className="text-[#64748B]" />
@@ -371,9 +396,10 @@ export default function ExportCustomsPage() {
               })}
             </div>
           </div>
+          )}
 
           {c && state && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5 min-w-0">
               {/* Where it settled */}
               <div
                 className="rounded-[16px] border p-5 flex items-start gap-3"

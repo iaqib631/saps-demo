@@ -92,6 +92,17 @@ export default function ExportUpliftPage() {
   const offloaded = rows.filter((x) => x.uplift?.outcome === "offloaded");
   const closed = rows.filter((x) => x.closure?.fileClosedAt);
 
+  /*
+   * Read at runtime: one consignment at LHE, four at KHI, five at HQ.
+   *
+   * Kept rather than dropped when it is alone. The detail opens on the ramp
+   * gate and the payload decision and never states which consignment it is
+   * deciding: it names the flight and the stage, but the AWB appears on this
+   * row and nowhere else on the page. Across the full width the row is one
+   * deep, so it costs no column and the detail takes the whole content width.
+   */
+  const onlyConsignment = rows.length === 1;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -158,7 +169,19 @@ export default function ExportUpliftPage() {
           description="E12 runs at the aircraft, after the ramp handover at E11."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        /*
+          Sized to the rows — an AWB, an outcome badge, a flight line and a
+          stage line — rather than to a third of the page. The detail track is
+          minmax(0,1fr) so the closure gate and handover cards scroll inside
+          their own containers instead of widening the grid.
+        */
+        <div
+          className={
+            onlyConsignment
+              ? "grid grid-cols-1 gap-5"
+              : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5"
+          }
+        >
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <div className="px-5 py-3.5 border-b border-[#E2E8F0] flex items-center gap-2">
               <PlaneTakeoff size={15} className="text-[#64748B]" />
@@ -206,7 +229,7 @@ export default function ExportUpliftPage() {
           </div>
 
           {c && uplift && closure && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5 min-w-0">
               {/* Ramp gate vs payload — deliberately adjacent */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div

@@ -233,6 +233,15 @@ export default function ExportRevenuePage() {
     (x) => reconcileRevenue(x, revenueForAwb(x.AWBNO)).breaks.length > 0,
   );
 
+  /*
+   * Read at runtime, because this list is two rows at LHE, four at KHI and six
+   * at HQ. Where it holds one, the picker chooses nothing and costs a column;
+   * everything the row states — AWBNO, SEQUENCE, DFLAG, APPROVED, FLIGHTNO,
+   * the route, TOTAL and SAPSSHARE — is restated in the header card below, so
+   * nothing goes with it.
+   */
+  const onlyRow = rows.length === 1;
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -355,7 +364,20 @@ export default function ExportRevenuePage() {
           description="A revenue row is cut at FC-11 §25, once the consignment has been uplifted and the carriage can be recognised."
         />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        /*
+          Sized to the rows it holds — an AWB with its sequence, two flag
+          badges and a money line — rather than to a third of the page. The
+          detail track is minmax(0,1fr) so the collection and control tables
+          scroll inside their own containers instead of widening the grid.
+        */
+        <div
+          className={
+            onlyRow
+              ? "grid grid-cols-1 gap-5"
+              : "grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-5"
+          }
+        >
+          {!onlyRow && (
           <div className="rounded-[16px] border border-[#E2E8F0] bg-white overflow-hidden h-fit">
             <CardHead icon={<Receipt size={15} />} title="Bookings" />
             <div className="max-h-[620px] overflow-y-auto">
@@ -418,9 +440,10 @@ export default function ExportRevenuePage() {
               })}
             </div>
           </div>
+          )}
 
           {r && recon && (
-            <div className="lg:col-span-2 flex flex-col gap-5">
+            <div className="flex flex-col gap-5 min-w-0">
               {/* ---------------- Header ---------------- */}
               <div className="rounded-[16px] border border-[#E2E8F0] bg-white p-5">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
